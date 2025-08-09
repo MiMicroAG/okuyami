@@ -1,0 +1,61 @@
+# サイト設定
+title: "お悔やみ情報"
+description: "山梨日日新聞のお悔やみ情報を自動収集・整理したサイトです"
+url: "https://your-username.github.io"
+baseurl: "/your-repository-name"
+
+# 著者情報
+author:
+  name: "お悔やみ情報bot"
+  email: "jun@taxa.jp"
+
+# Jekyll設定
+markdown: kramdown
+highlighter: rouge
+permalink: /:year/:month/:day/:title/
+
+# テーマ設定（GitHub Pages対応）
+theme: minima
+# または remote_theme を使用
+# remote_theme: jekyll/minima
+
+# プラグイン（GitHub Pages対応のもの）
+plugins:
+  - jekyll-feed
+  - jekyll-sitemap
+  - jekyll-seo-tag
+
+# コレクション設定
+collections:
+  posts:
+    output: true
+    permalink: /:collection/:year/:month/:day/:title/
+
+# デフォルト設定
+defaults:
+  - scope:
+      path: ""
+      type: "posts"
+    values:
+      layout: "post"
+      author: "お悔やみ情報bot"
+
+# 除外ファイル
+exclude:
+  - README.md
+  - Gemfile
+  - Gemfile.lock
+  - node_modules
+  - vendor
+
+# タイムゾーン
+timezone: Asia/Tokyo
+
+# 言語設定
+lang: ja
+
+# フィード設定
+feed:
+  categories:
+    - obituary
+    - news

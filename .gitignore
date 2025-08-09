@@ -1,0 +1,25 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual env
+.venv/
+venv/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/
+
+# Local configs / secrets
+config.ini
+.env
+*.log
+
+# Generated data/outputs
+okuyami_output/
+okuyami_data/
+
+# Nested GitHub Pages repo (managed separately)
+okuyami-info/

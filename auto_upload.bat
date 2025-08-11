@@ -146,8 +146,23 @@ echo    - Generating CSV and Markdown files
 echo    - Applying priority sorting (NEC → Chuo-shi → Others)
 
 python parse_and_format_obituary.py --auto
-if errorlevel 1 (
-    echo Error: Failed to analyze and format obituary data
+set "PARSE_RC=%ERRORLEVEL%"
+if "%PARSE_RC%"=="2" (
+    echo No obituary entries parsed for today.
+    if defined OKUYAMI_DISABLE_LINE (
+        echo    - LINE notification disabled; skipping no-data message
+    ) else if defined LINE_MESSAGING_CHANNEL_ACCESS_TOKEN (
+        echo    - Notifying LINE (no obituary data)
+        python send_line_stats.py --notify-no-data
+    ) else (
+        echo    - LINE token not set; skipping notification
+    )
+    echo.
+    echo Process finished (no data). Exiting gracefully.
+    if not defined OKUYAMI_NONINTERACTIVE pause
+    exit /b 0
+) else if not "%PARSE_RC%"=="0" (
+    echo Error: Failed to analyze and format obituary data (rc=%PARSE_RC%)
     if not defined OKUYAMI_NONINTERACTIVE pause
     exit /b 1
 )

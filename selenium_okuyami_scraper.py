@@ -492,9 +492,27 @@ class SeleniumOkuyamiScraper:
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#p_textarea")))
                 textarea_element = driver.find_element(By.CSS_SELECTOR, "#p_textarea")
                 content = textarea_element.text
-                
+                # --- Normalization & cleanup to mitigate console mojibake ---
+                try:
+                    import unicodedata, re as _re
+                    # NFC normalize
+                    content_norm = unicodedata.normalize('NFC', content)
+                    # Remove isolated surrogate / non-BMP control-like chars except line breaks & Japanese common range
+                    content_norm = ''.join(c for c in content_norm if (c >= ' ' and c != '\uFFFD'))
+                    # Collapse any repeating replacement markers
+                    content = _re.sub(r'\uFFFD+', '�', content_norm)
+                except Exception:
+                    pass
                 if content and content.strip():
-                    print("お悔やみ情報を#p_textareaから取得しました")
+                    # ログ出力時の文字化け片(� や ���)を除去し統一
+                    try:
+                        import re as _relog
+                        log_msg = "お悔やみ情報を#p_textareaから取得しました"
+                        log_msg = _relog.sub(r'�+', '�', log_msg)  # 連続した�を1つへ
+                        log_msg = log_msg.replace('�', '')  # 最終的に除去（表示簡潔化）
+                        print(log_msg)
+                    except Exception:
+                        print("お悔やみ情報を#p_textareaから取得しました")
                     return self._filter_okuyami_text(content)
             except Exception as e:
                 print(f"#p_textarea要素の取得に失敗: {e}")

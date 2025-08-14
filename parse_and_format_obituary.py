@@ -96,6 +96,15 @@ class OkuyamiParser:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+            # --- 前処理: 1行に詰め込まれているケースに対応するため、区切り記号前に改行を挿入 ---
+            # 既に改行の直後にある場合は挿入しない (先読み否定)
+            import re as _re_pre
+            # Region 区切り '■'
+            content = _re_pre.sub(r'(?<!\n)■', '\n■', content)
+            # 市町村/人物開始 '◇'
+            content = _re_pre.sub(r'(?<!\n)◇', '\n◇', content)
+            # 連続した改行を1つに圧縮
+            content = _re_pre.sub(r'\n{2,}', '\n', content)
             
             # ヘッダー部分をスキップして本文部分を取得
             lines = content.split('\n')
@@ -141,9 +150,55 @@ class OkuyamiParser:
                 continue
             
             # 市町村セクションの検出
-            city_match = re.match(r'◇(.+)', line)
-            if city_match:
-                self.current_city = self._normalize_municipality(city_match.group(1).strip())
+            if line.startswith('◇'):
+                rest = line[1:].strip()
+                # 既知市町村（山梨県内想定）の最長一致で先頭を切り出し
+                known_munis = [
+                    '富士河口湖町', '市川三郷町', '富士吉田市', '山梨市', '大月市', '甲府市', '甲斐市', '中央市',
+                    '南アルプス市', '笛吹市', '北杜市', '都留市', '上野原市', '韮崎市', '身延町', '昭和町',
+                    '南部町', '富士川町', '早川町', '道志村', '西桂町', '忍野村', '山中湖村', '小菅村', '丹波山村'
+                ]
+                matched = None
+                for m in sorted(known_munis, key=len, reverse=True):
+                    if rest.startswith(m):
+                        matched = m
+                        break
+                if matched and 'さん（' in rest[len(matched):]:
+                    person_part = rest[len(matched):].lstrip()
+                    self.current_city = self._normalize_municipality(matched)
+                    person_info = self._parse_person_info(person_part)
+                    if person_info:
+                        person_info['地域'] = self.current_region
+                        city_val = self.current_city if self.current_city else self.current_region
+                        person_info['市町村'] = self._normalize_municipality(city_val)
+                        self.data.append(person_info)
+                    i += 1
+                    continue
+                # フォールバック: 'さん（' の直前までで最も自然な区切りを探す（末尾の市/町/村/区 ただしその後 2～4 文字で 'さん（' を含む人名が続く候補を選択）
+                if 'さん（' in rest:
+                    idx_person = rest.find('さん（')
+                    candidate = None
+                    for pos in range(idx_person - 1, -1, -1):
+                        if rest[pos] in '市町村区':
+                            tail = rest[pos+1:idx_person]
+                            # 人名仮判定: 1～4 文字程度（姓+名で4～6程度になるが姓のみ/姓+名の前半が入ることを許容）
+                            if 0 < len(tail) <= 2:  # 市町村末尾直後すぐ人名開始とみなす
+                                candidate = pos
+                                break
+                    if candidate is not None:
+                        city = rest[:candidate+1].strip()
+                        person_part = rest[candidate+1:].lstrip()
+                        self.current_city = self._normalize_municipality(city)
+                        person_info = self._parse_person_info(person_part)
+                        if person_info:
+                            person_info['地域'] = self.current_region
+                            city_val = self.current_city if self.current_city else self.current_region
+                            person_info['市町村'] = self._normalize_municipality(city_val)
+                            self.data.append(person_info)
+                        i += 1
+                        continue
+                # 上記いずれも失敗した場合は従来通り市町村行として扱う
+                self.current_city = self._normalize_municipality(rest)
                 i += 1
                 continue
             
@@ -984,6 +1039,11 @@ def main():
         
         print(f"\n出力ディレクトリ: {output_dir}")
         print("解析・フォーマット処理が正常に完了しました")
+        # バッチ側で確実に件数抽出できるASCIIタグ行を出力
+        try:
+            print(f"ENTRY_COUNT={len(data)}")
+        except Exception:
+            print("ENTRY_COUNT=")
         
     except Exception as e:
         print(f"出力エラー: {e}")

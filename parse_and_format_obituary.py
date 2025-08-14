@@ -992,12 +992,25 @@ def main():
     # パーサーを作成して解析実行
     parser_obj = OkuyamiParser()
     data = parser_obj.parse_file(input_file)
-    
+
+    # 新聞休刊日など明示メッセージを検知（テキスト全体で判定）
+    is_holiday = False
+    try:
+        with open(input_file, 'r', encoding='utf-8') as _rf:
+            raw_txt = _rf.read()
+            if '休刊日' in raw_txt or '掲載はありません' in raw_txt:
+                is_holiday = True
+    except Exception:
+        pass
+
     if not data:
-        print("お悔やみ情報が見つかりませんでした")
-    # 解析対象ファイルは存在するが有効なお悔やみエントリが無い場合は 2 を返す
-    # 1 は異常エラーとの区別用（バッチ側で no-data 通知を送るか判定）
-    sys.exit(2)
+        if is_holiday:
+            print('新聞休刊日のため掲載なし（検知）')
+        else:
+            print("お悔やみ情報が見つかりませんでした")
+        # 解析対象ファイルは存在するが有効なお悔やみエントリが無い場合は 2 を返す
+        # 1 は異常エラーとの区別用（バッチ側で no-data 通知を送るか判定）
+        sys.exit(2)
     
     print(f"\n{len(data)}件のお悔やみ情報を解析しました")
     

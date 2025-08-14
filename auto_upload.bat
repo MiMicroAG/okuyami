@@ -158,7 +158,7 @@ if "%PARSE_RC%"=="2" (
         echo    - LINE token not set; skipping notification
     )
     echo.
-    echo Process finished (no data). Exiting gracefully.
+    echo Process finished (no data or holiday). Exiting gracefully.
     if not defined OKUYAMI_NONINTERACTIVE pause
     exit /b 0
 ) else if not "%PARSE_RC%"=="0" (

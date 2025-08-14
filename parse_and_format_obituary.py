@@ -10,6 +10,7 @@ import csv
 import os
 from datetime import datetime
 import pandas as pd
+from common_utils import compute_priority
 import configparser
 from typing import Optional
 try:
@@ -443,24 +444,7 @@ class OkuyamiParser:
             
             # 優先度に基づいてソート
             def get_priority(row):
-                # 全ての文字列フィールドを結合して検索
-                text_fields = [
-                    str(row.get('氏名', '')),
-                    str(row.get('職歴・属性', '')),
-                    str(row.get('関係者', '')),
-                    str(row.get('喪主', ''))
-                ]
-                full_text = ' '.join(text_fields)
-                
-                # ＮＥＣキーワードのチェック（全角・半角両方）
-                if 'ＮＥＣ' in full_text or 'NEC' in full_text:
-                    return 1
-                # 中央市のチェック
-                elif str(row.get('市町村', '')) == '中央市':
-                    return 2
-                # その他
-                else:
-                    return 3
+                return compute_priority(row)
             
             # 元の順序を保持するためのインデックスを追加
             df = df.reset_index(drop=True)
@@ -519,24 +503,7 @@ class OkuyamiParser:
             
             # 優先度に基づいてソート
             def get_priority(row):
-                # 全ての文字列フィールドを結合して検索
-                text_fields = [
-                    str(row.get('氏名', '')),
-                    str(row.get('職歴・属性', '')),
-                    str(row.get('関係者', '')),
-                    str(row.get('喪主', ''))
-                ]
-                full_text = ' '.join(text_fields)
-                
-                # ＮＥＣキーワードのチェック（全角・半角両方）
-                if 'ＮＥＣ' in full_text or 'NEC' in full_text:
-                    return 1
-                # 中央市のチェック
-                elif str(row.get('市町村', '')) == '中央市':
-                    return 2
-                # その他
-                else:
-                    return 3
+                return compute_priority(row)
             
             # 元の順序を保持するためのインデックスを追加
             df = df.reset_index(drop=True)
@@ -597,24 +564,7 @@ class OkuyamiParser:
             
             # 優先度に基づいてソート
             def get_priority(row):
-                # 全ての文字列フィールドを結合して検索
-                text_fields = [
-                    str(row.get('氏名', '')),
-                    str(row.get('職歴・属性', '')),
-                    str(row.get('関係者', '')),
-                    str(row.get('喪主', ''))
-                ]
-                full_text = ' '.join(text_fields)
-                
-                # ＮＥＣキーワードのチェック（全角・半角両方）
-                if 'ＮＥＣ' in full_text or 'NEC' in full_text:
-                    return 1
-                # 中央市のチェック
-                elif str(row.get('市町村', '')) == '中央市':
-                    return 2
-                # その他
-                else:
-                    return 3
+                return compute_priority(row)
             
             # 元の順序を保持するためのインデックスを追加
             df = df.reset_index(drop=True)

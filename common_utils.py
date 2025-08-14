@@ -4,16 +4,21 @@
 - サイトURL取得
 - 本日ポストURL生成
 - 優先度計算
-他スクリプト (parse_and_format_obituary.py, send_line_stats.py など) から利用。
+- 休刊日/掲載なし判定
+- フロントマター生成
+- ロガー取得
+他スクリプト (parse_and_format_obituary.py, send_line_stats.py, upload_to_github_pages.py など) から利用。
 """
 from __future__ import annotations
 from datetime import datetime
 import os
 import re
-from typing import Any, Dict
+from typing import Any
+import logging
 
 __all__ = [
-    'get_site_url', 'get_today_post_url', 'compute_priority'
+    'get_site_url', 'get_today_post_url', 'compute_priority',
+    'detect_holiday', 'build_front_matter', 'get_jp_date', 'get_logger'
 ]
 
 _DEF_SITE = 'https://MiMicroAG.github.io/okuyami-info'
@@ -72,3 +77,57 @@ def compute_priority(row: Any) -> int:
         return 3
     except Exception:
         return 99
+
+
+# 休刊日 / 掲載なし判定
+_HOLIDAY_KEYWORDS = [
+    '休刊日', '掲載はありません', '掲載は ありません', '掲載 ありません'
+]
+
+
+def detect_holiday(text: str) -> bool:
+    if not text:
+        return False
+    for kw in _HOLIDAY_KEYWORDS:
+        if kw in text:
+            return True
+    return False
+
+
+def get_jp_date(dt: datetime | None = None) -> str:
+    if dt is None:
+        dt = datetime.now()
+    return dt.strftime('%Y年%m月%d日')
+
+
+def build_front_matter(title: str, dt: datetime | None = None, *, layout: str = 'post', categories=None, tags=None, author: str = 'お悔やみ情報bot') -> str:
+    if dt is None:
+        dt = datetime.now()
+    if categories is None:
+        categories = ['obituary', 'news']
+    if tags is None:
+        tags = ['お悔やみ', '訃報', '山梨']
+    cats = '[' + ', '.join(categories) + ']'
+    tgs = '[' + ', '.join(tags) + ']'
+    fm = (
+        '---\n'
+        f'layout: {layout}\n'
+        f'title: "{title}"\n'
+        f'date: {dt.strftime("%Y-%m-%d %H:%M:%S")} +0900\n'
+        f'categories: {cats}\n'
+        f'tags: {tgs}\n'
+        f'author: "{author}"\n'
+        '---\n\n'
+    )
+    return fm
+
+
+def get_logger(name: str = 'okuyami') -> logging.Logger:
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        handler = logging.StreamHandler()
+        fmt = logging.Formatter('[%(levelname)s] %(message)s')
+        handler.setFormatter(fmt)
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+    return logger

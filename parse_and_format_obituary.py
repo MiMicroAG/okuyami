@@ -10,7 +10,7 @@ import csv
 import os
 from datetime import datetime
 import pandas as pd
-from common_utils import compute_priority
+from common_utils import compute_priority, detect_holiday, get_jp_date, build_front_matter
 import configparser
 from typing import Optional
 try:
@@ -579,12 +579,8 @@ class OkuyamiParser:
             
             # Markdownファイルとして保存
             with open(output_path, 'w', encoding='utf-8') as f:
-                # フロントマター（Jekyll用）
-                f.write('---\n')
-                f.write('layout: default\n')
-                f.write(f'title: お悔やみ情報 ({datetime.now().strftime("%Y年%m月%d日")})\n')
-                f.write(f'date: {datetime.now().strftime("%Y-%m-%d")}\n')
-                f.write('---\n\n')
+                fm = build_front_matter(f'お悔やみ情報 ({get_jp_date()})', datetime.now(), layout='default')
+                f.write(fm)
                 
                 # CSSスタイルを追加（モバイル最適化）
                 f.write('<style>\n')
@@ -597,7 +593,7 @@ class OkuyamiParser:
                 f.write('</style>\n\n')
                 
                 # タイトル
-                f.write(f'# お悔やみ情報 ({datetime.now().strftime("%Y年%m月%d日")})\n\n')
+                f.write(f'# お悔やみ情報 ({get_jp_date()})\n\n')
                 # 統計情報と市町村別人数はWebには掲載しない（LINEに通知済み）
                 
                 # 全体テーブル（簡易版のみ）

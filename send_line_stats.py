@@ -12,6 +12,7 @@ import glob
 import configparser
 from datetime import datetime
 from typing import Optional
+from common_utils import get_today_post_url, get_site_url, get_jp_date
 
 try:
     import pandas as pd
@@ -25,38 +26,8 @@ except Exception:
     requests = None  # type: ignore
 
 
-def _get_site_url() -> str:
-    env_url = os.getenv('OKUYAMI_SITE_URL')
-    if env_url and env_url.strip():
-        return env_url.strip()
-    cfg_path = os.path.join(os.path.dirname(__file__), 'okuyami-info', '_config.yml')
-    site = 'https://MiMicroAG.github.io/okuyami-info'
-    try:
-        if os.path.exists(cfg_path):
-            url_val, baseurl_val = '', ''
-            import re as _re
-            with open(cfg_path, 'r', encoding='utf-8') as yf:
-                for line in yf:
-                    m = _re.match(r"\s*url:\s*\"?([^\"\n#]+)\"?", line)
-                    if m:
-                        url_val = m.group(1).strip()
-                    m2 = _re.match(r"\s*baseurl:\s*\"?([^\"\n#]+)\"?", line)
-                    if m2:
-                        baseurl_val = m2.group(1).strip()
-            if url_val:
-                if baseurl_val:
-                    site = f"{url_val}{baseurl_val if baseurl_val.startswith('/') else '/' + baseurl_val}"
-                else:
-                    site = url_val
-    except Exception:
-        pass
-    return site
-
-
-def _get_today_post_url() -> str:
-    site = _get_site_url().rstrip('/')
-    today = datetime.now()
-    return f"{site}/posts/{today.strftime('%Y/%m/%d')}/okuyami-info/"
+_get_site_url = get_site_url  # backward compatibility
+_get_today_post_url = get_today_post_url
 
 
 def _find_todays_csv() -> Optional[str]:

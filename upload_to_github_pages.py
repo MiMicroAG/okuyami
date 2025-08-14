@@ -11,6 +11,7 @@ import glob
 import subprocess
 from datetime import datetime
 from typing import Optional
+from common_utils import build_front_matter, get_jp_date
 import argparse
 
 
@@ -89,16 +90,7 @@ class GitHubPagesUploader:
             import re as _re
             content_rest = _re.sub(r'^#\s*お悔やみ情報 \([^)]*\)', f'# お悔やみ情報 ({jp_date})', content_rest, count=1, flags=_re.MULTILINE)
 
-            front = (
-                '---\n'
-                'layout: post\n'
-                f'title: "お悔やみ情報 ({dt.strftime("%Y年%m月%d日")})"\n'
-                f'date: {dt.strftime("%Y-%m-%d %H:%M:%S")} +0900\n'
-                'categories: [obituary, news]\n'
-                'tags: [お悔やみ, 訃報, 山梨]\n'
-                'author: "お悔やみ情報bot"\n'
-                '---\n\n'
-            )
+            front = build_front_matter(f'お悔やみ情報 ({get_jp_date(dt)})', dt)
 
             with open(dest_path, 'w', encoding='utf-8') as wf:
                 wf.write(front + content_rest)
@@ -154,16 +146,8 @@ class GitHubPagesUploader:
             else:
                 body_msg = '本日のお悔やみ情報はありません。'
                 title_suffix = '（掲載なし）'
-            front = (
-                '---\n'
-                'layout: post\n'
-                f'title: "お悔やみ情報 ({jp_date}{title_suffix})"\n'
-                f'date: {dt.strftime("%Y-%m-%d 00:00:00")} +0900\n'
-                'categories: [obituary, news]\n'
-                'tags: [お悔やみ, 訃報, 山梨]\n'
-                'author: "お悔やみ情報bot"\n'
-                '---\n\n'
-            )
+            from datetime import datetime as _dt
+            front = build_front_matter(f'お悔やみ情報 ({jp_date}{title_suffix})', _dt(dt.year, dt.month, dt.day, 0, 0, 0))
             content = (
                 f'# お悔やみ情報 ({jp_date})\n\n'
                 f'> {body_msg}\n\n'

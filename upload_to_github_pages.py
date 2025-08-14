@@ -1,331 +1,258 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-GitHub Pages アップロードスクリプト
-お悔やみ情報のMarkdownファイルをGitHub Pagesリポジトリにアップロード
+"""GitHub Pages アップロードスクリプト
+お悔やみ情報Markdownファイルを Jekyll _posts へ配置して GitHub へプッシュ
+バックフィル用に --date (YYYY-MM-DD) で投稿日付を上書き可能
 """
 
 import os
 import sys
-import subprocess
-import shutil
 import glob
+import subprocess
 from datetime import datetime
+from typing import Optional
 import argparse
 
+
 class GitHubPagesUploader:
-    def _display_path(self, path: str) -> str:
-        """ユーザー名を含む先頭パスを環境変数表記に置換して表示用に整形"""
-        try:
-            p_norm = os.path.normcase(os.path.normpath(path))
-            one = os.environ.get('OneDrive')
-            usr = os.environ.get('USERPROFILE')
-            if one:
-                one_norm = os.path.normcase(os.path.normpath(one))
-                if p_norm.startswith(one_norm):
-                    rest = path[len(one):].lstrip('\\/')
-                    return f"%OneDrive%\\{rest}" if rest else "%OneDrive%"
-            if usr:
-                usr_norm = os.path.normcase(os.path.normpath(usr))
-                if p_norm.startswith(usr_norm):
-                    rest = path[len(usr):].lstrip('\\/')
-                    return f"%USERPROFILE%\\{rest}" if rest else "%USERPROFILE%"
-        except Exception:
-            pass
-        return path
-    def __init__(self, repo_path, branch="main"):
-        """
-        初期化
-        
-        Args:
-            repo_path (str): GitHub Pagesリポジトリのローカルパス
-            branch (str): アップロード対象のブランチ名
-        """
+    def __init__(self, repo_path: str, branch: str = "main"):
         self.repo_path = repo_path
         self.branch = branch
         self.posts_dir = os.path.join(repo_path, "_posts")
-        
-    def setup_repository(self):
-        """
-        リポジトリの設定と準備
-        """
+
+    # 表示用パス短縮
+    def _display_path(self, path: str) -> str:
         try:
-            # リポジトリディレクトリの存在確認
+            p_norm = os.path.normcase(os.path.normpath(path))
+            for env_key in ("OneDrive", "USERPROFILE"):
+                base = os.environ.get(env_key)
+                if not base:
+                    continue
+                b_norm = os.path.normcase(os.path.normpath(base))
+                if p_norm.startswith(b_norm):
+                    rest = path[len(base):].lstrip('\\/')
+                    return f"%{env_key}%\\{rest}" if rest else f"%{env_key}%"
+        except Exception:
+            pass
+        return path
+
+    def setup_repository(self) -> bool:
+        try:
             if not os.path.exists(self.repo_path):
-                print(f"エラー: リポジトリディレクトリが見つかりません: {self._display_path(self.repo_path)}")
+                print(f"エラー: リポジトリが存在しません: {self._display_path(self.repo_path)}")
                 return False
-            
-            # _postsディレクトリの作成
+            if not os.path.exists(os.path.join(self.repo_path, ".git")):
+                print(f"エラー: Gitリポジトリではありません: {self._display_path(self.repo_path)}")
+                return False
             os.makedirs(self.posts_dir, exist_ok=True)
-            
-            # Gitリポジトリかチェック
-            git_dir = os.path.join(self.repo_path, ".git")
-            if not os.path.exists(git_dir):
-                print(f"エラー: {self._display_path(self.repo_path)} はGitリポジトリではありません")
-                return False
-            
-            print(f"リポジトリパス: {self._display_path(self.repo_path)}")
-            print(f"投稿ディレクトリ: {self._display_path(self.posts_dir)}")
+            print(f"リポジトリ: {self._display_path(self.repo_path)}")
+            print(f"_posts : {self._display_path(self.posts_dir)}")
             return True
-            
         except Exception as e:
             print(f"リポジトリ設定エラー: {e}")
             return False
-    
-    def find_latest_markdown_file(self, source_dir="./okuyami_output"):
-        """
-        最新のMarkdownファイルを検索
-        
-        Args:
-            source_dir (str): 検索対象ディレクトリ
-            
-        Returns:
-            str: 最新のMarkdownファイルのパス（見つからない場合はNone）
-        """
-        try:
-            # Markdownファイルのパターン
-            pattern = os.path.join(source_dir, "*.md")
-            md_files = glob.glob(pattern)
-            
-            if not md_files:
-                print(f"Markdownファイルが見つかりません: {source_dir}")
-                return None
-            
-            # 最新のファイルを取得（作成時刻順）
-            latest_file = max(md_files, key=os.path.getctime)
-            print(f"最新のMarkdownファイル: {latest_file}")
-            return latest_file
-            
-        except Exception as e:
-            print(f"ファイル検索エラー: {e}")
-            return None
-    
-    def prepare_jekyll_post(self, source_file):
-        """
-        JekyllのPost形式に変換
-        
-        Args:
-            source_file (str): 元のMarkdownファイルパス
-            
-        Returns:
-            str: 変換後のファイルパス
-        """
-        try:
-            # 現在の日付でファイル名を生成
-            date_str = datetime.now().strftime("%Y-%m-%d")
-            base_name = f"{date_str}-okuyami-info.md"
-            dest_file = os.path.join(self.posts_dir, base_name)
-            
-            # ファイルを読み込み
-            with open(source_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Jekyll用のフロントマターを修正
-            jekyll_frontmatter = f"""---
-layout: post
-title: "お悔やみ情報 ({datetime.now().strftime('%Y年%m月%d日')})"
-date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} +0900
-categories: [obituary, news]
-tags: [お悔やみ, 訃報, 山梨]
-author: "お悔やみ情報bot"
----
 
-"""
-            
-            # 既存のフロントマターを削除して新しいものに置換
-            if content.startswith('---'):
-                # 既存のフロントマターの終了位置を見つける
-                end_pos = content.find('---', 3)
-                if end_pos != -1:
-                    content = content[end_pos + 3:].lstrip('\n')
-            
-            # 新しいコンテンツを作成
-            new_content = jekyll_frontmatter + content
-            
-            # ファイルに保存
-            with open(dest_file, 'w', encoding='utf-8') as f:
-                f.write(new_content)
-            
-            print(f"Jekyll投稿ファイルを作成: {self._display_path(dest_file)}")
-            return dest_file
-            
-        except Exception as e:
-            print(f"Jekyll投稿準備エラー: {e}")
-            return None
-    
-    def run_git_command(self, command, cwd=None):
-        """
-        Gitコマンドを実行
-        
-        Args:
-            command (list): 実行するGitコマンド
-            cwd (str): 作業ディレクトリ
-            
-        Returns:
-            bool: 成功した場合True
-        """
+    def find_latest_markdown_file(self, source_dir: str = "./okuyami_output") -> Optional[str]:
         try:
-            if cwd is None:
-                cwd = self.repo_path
-            
-            result = subprocess.run(
-                command,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                encoding='utf-8'
+            md_files = glob.glob(os.path.join(source_dir, "*.md"))
+            if not md_files:
+                print(f"Markdownが見つかりません: {source_dir}")
+                return None
+            latest = max(md_files, key=os.path.getctime)
+            print(f"最新Markdown: {latest}")
+            return latest
+        except Exception as e:
+            print(f"検索エラー: {e}")
+            return None
+
+    def prepare_jekyll_post(self, source_file: str, dt: datetime) -> Optional[str]:
+        """既存Markdownを Jekyll post 形式に変換"""
+        try:
+            date_str = dt.strftime('%Y-%m-%d')
+            dest_path = os.path.join(self.posts_dir, f"{date_str}-okuyami-info.md")
+
+            with open(source_file, 'r', encoding='utf-8') as rf:
+                content = rf.read()
+
+            # 既存 front matter 除去
+            if content.startswith('---'):
+                end_pos = content.find('\n---', 3)
+                if end_pos != -1:
+                    content_rest = content[end_pos + 4:].lstrip('\n')
+                else:
+                    content_rest = content
+            else:
+                content_rest = content
+
+            # 見出し日付置換（1回のみ）
+            jp_date = dt.strftime('%Y年%m月%d日')
+            import re as _re
+            content_rest = _re.sub(r'^#\s*お悔やみ情報 \([^)]*\)', f'# お悔やみ情報 ({jp_date})', content_rest, count=1, flags=_re.MULTILINE)
+
+            front = (
+                '---\n'
+                'layout: post\n'
+                f'title: "お悔やみ情報 ({dt.strftime("%Y年%m月%d日")})"\n'
+                f'date: {dt.strftime("%Y-%m-%d %H:%M:%S")} +0900\n'
+                'categories: [obituary, news]\n'
+                'tags: [お悔やみ, 訃報, 山梨]\n'
+                'author: "お悔やみ情報bot"\n'
+                '---\n\n'
             )
-            
+
+            with open(dest_path, 'w', encoding='utf-8') as wf:
+                wf.write(front + content_rest)
+            print(f"Jekyll投稿ファイル生成: {self._display_path(dest_path)}")
+            return dest_path
+        except Exception as e:
+            print(f"Jekyll準備エラー: {e}")
+            return None
+
+    def run_git_command(self, cmd: list) -> bool:
+        try:
+            result = subprocess.run(cmd, cwd=self.repo_path, capture_output=True, text=True, encoding='utf-8')
             if result.returncode == 0:
-                if result.stdout.strip():
-                    print(f"Git出力: {result.stdout.strip()}")
+                out = result.stdout.strip()
+                if out:
+                    print(out)
                 return True
             else:
-                print(f"Gitエラー: {result.stderr.strip()}")
+                err = result.stderr.strip()
+                if err:
+                    print(f"Gitエラー: {err}")
                 return False
-                
         except Exception as e:
-            print(f"Gitコマンド実行エラー: {e}")
+            print(f"Git実行例外: {e}")
             return False
-    
-    def commit_and_push(self, file_path, commit_message=None):
-        """
-        ファイルをコミットしてプッシュ
-        
-        Args:
-            file_path (str): コミット対象のファイルパス
-            commit_message (str): コミットメッセージ
-            
-        Returns:
-            bool: 成功した場合True
-        """
+
+    def commit_and_push(self, file_path: str, commit_message: Optional[str]) -> bool:
+        if commit_message is None:
+            commit_message = f"お悔やみ情報を更新 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
+        rel = os.path.relpath(file_path, self.repo_path)
+        print("git add/commit/push 開始")
+        if not self.run_git_command(['git', 'add', rel]):
+            return False
+        if not self.run_git_command(['git', 'commit', '-m', commit_message]):
+            print("コミットなし/失敗")
+            return False
+        if not self.run_git_command(['git', 'push', 'origin', self.branch]):
+            return False
+        print("GitHub Pages へプッシュ完了")
+        return True
+
+    def prepare_empty_post(self, dt: datetime, reason: str) -> Optional[str]:
+        """休刊日/データ無し用の簡易ポスト生成"""
         try:
-            if commit_message is None:
-                commit_message = f"お悔やみ情報を更新 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
-            
-            # 相対パスに変換
-            rel_file_path = os.path.relpath(file_path, self.repo_path)
-            
-            print(f"Gitコミット・プッシュを開始...")
-            
-            # git add
-            if not self.run_git_command(['git', 'add', rel_file_path]):
-                return False
-            
-            # git commit
-            if not self.run_git_command(['git', 'commit', '-m', commit_message]):
-                print("コミットする変更がないか、コミットに失敗しました")
-                return False
-            
-            # git push
-            if not self.run_git_command(['git', 'push', 'origin', self.branch]):
-                return False
-            
-            print(f"GitHub Pagesへのアップロードが完了しました")
-            return True
-            
+            date_str = dt.strftime('%Y-%m-%d')
+            dest_path = os.path.join(self.posts_dir, f"{date_str}-okuyami-info.md")
+            if os.path.exists(dest_path):
+                print(f"警告: 既にポストが存在します: {dest_path} 上書きします")
+            jp_date = dt.strftime('%Y年%m月%d日')
+            if reason == 'holiday':
+                body_msg = '本日は新聞休刊日のため掲載はありません。'
+                title_suffix = ' 休刊日'
+            else:
+                body_msg = '本日のお悔やみ情報はありません。'
+                title_suffix = '（掲載なし）'
+            front = (
+                '---\n'
+                'layout: post\n'
+                f'title: "お悔やみ情報 ({jp_date}{title_suffix})"\n'
+                f'date: {dt.strftime("%Y-%m-%d 00:00:00")} +0900\n'
+                'categories: [obituary, news]\n'
+                'tags: [お悔やみ, 訃報, 山梨]\n'
+                'author: "お悔やみ情報bot"\n'
+                '---\n\n'
+            )
+            content = (
+                f'# お悔やみ情報 ({jp_date})\n\n'
+                f'> {body_msg}\n\n'
+                '*自動生成: 休刊日/掲載なし判定*\n'
+            )
+            with open(dest_path, 'w', encoding='utf-8') as wf:
+                wf.write(front + content)
+            print(f"空ポスト生成: {self._display_path(dest_path)}")
+            return dest_path
         except Exception as e:
-            print(f"コミット・プッシュエラー: {e}")
-            return False
-    
-    def upload_markdown_file(self, source_file=None, commit_message=None):
-        """
-        Markdownファイルをアップロード
-        
-        Args:
-            source_file (str): アップロード対象のMarkdownファイル（Noneの場合は最新を自動検索）
-            commit_message (str): コミットメッセージ
-            
-        Returns:
-            bool: 成功した場合True
-        """
+            print(f"空ポスト生成エラー: {e}")
+            return None
+
+    def upload_markdown_file(self, source_file: Optional[str], commit_message: Optional[str], dt: datetime, generate_empty: bool = False, reason: str = 'holiday') -> bool:
         try:
-            # リポジトリの準備
             if not self.setup_repository():
                 return False
-            
-            # ソースファイルの決定
-            if source_file is None:
-                source_file = self.find_latest_markdown_file()
+            if generate_empty:
+                jekyll_file = self.prepare_empty_post(dt, reason)
+            else:
                 if source_file is None:
+                    source_file = self.find_latest_markdown_file()
+                    if source_file is None:
+                        return False
+                if not os.path.exists(source_file):
+                    print(f"エラー: ファイル未存在: {source_file}")
                     return False
-            
-            if not os.path.exists(source_file):
-                print(f"エラー: ファイルが見つかりません: {source_file}")
+                jekyll_file = self.prepare_jekyll_post(source_file, dt)
+            if not jekyll_file:
                 return False
-            
-            # Jekyll投稿形式に変換
-            jekyll_file = self.prepare_jekyll_post(source_file)
-            if jekyll_file is None:
-                return False
-            
-            # GitHub Pagesにアップロード
-            success = self.commit_and_push(jekyll_file, commit_message)
-            
-            if success:
-                print("\n" + "="*50)
-                print("アップロード完了!")
-                print(f"ファイル: {os.path.basename(jekyll_file)}")
-                print("GitHub Pagesで数分後に更新が反映されます。")
-                print("="*50)
-            
-            return success
-            
+            if self.commit_and_push(jekyll_file, commit_message):
+                print("\n" + "=" * 50)
+                print("アップロード完了")
+                print(f"投稿: {os.path.basename(jekyll_file)}")
+                print("数分後にサイトへ反映されます")
+                print("=" * 50)
+                return True
+            return False
         except Exception as e:
             print(f"アップロードエラー: {e}")
             return False
 
 
 def main():
-    """
-    メイン関数
-    """
-    parser = argparse.ArgumentParser(description="GitHub Pages お悔やみ情報アップローダー")
-    parser.add_argument("--repo", required=True, help="GitHub Pagesリポジトリのローカルパス")
-    parser.add_argument("--file", help="アップロードするMarkdownファイルのパス（省略時は最新を自動選択）")
-    parser.add_argument("--branch", default="main", help="アップロード先のブランチ名（デフォルト: main）")
-    parser.add_argument("--message", help="コミットメッセージ")
-    
-    # 引数がない場合はインタラクティブモード
-    if len(sys.argv) == 1:
-        print("GitHub Pages お悔やみ情報アップローダー")
-        print("=" * 40)
-        
-        # リポジトリパスの入力
-        repo_path = input("GitHub Pagesリポジトリのローカルパスを入力してください: ").strip()
-        if not repo_path:
-            print("リポジトリパスが入力されていません")
-            return
-        
-        # ファイルパスの入力（オプション）
-        file_path = input("Markdownファイルのパス（Enterで最新を自動選択）: ").strip()
-        if not file_path:
-            file_path = None
-        
-        # ブランチ名の入力
-        branch = input("ブランチ名（Enterでmain）: ").strip()
-        if not branch:
-            branch = "main"
-        
-        # コミットメッセージの入力
-        commit_msg = input("コミットメッセージ（Enterで自動生成）: ").strip()
-        if not commit_msg:
-            commit_msg = None
-        
-        # アップロード実行
-        uploader = GitHubPagesUploader(repo_path, branch)
-        success = uploader.upload_markdown_file(file_path, commit_msg)
-        
+    parser = argparse.ArgumentParser(description="お悔やみ情報 GitHub Pages アップローダー")
+    parser.add_argument('--repo', required=True, help='GitHub Pages リポジトリ (例: ./okuyami-info)')
+    parser.add_argument('--file', help='アップロードするMarkdown (未指定で最新)')
+    parser.add_argument('--branch', default='main', help='ブランチ (default: main)')
+    parser.add_argument('--message', help='コミットメッセージ')
+    parser.add_argument('--date', help='投稿日付 YYYY-MM-DD (バックフィル用)')
+    parser.add_argument('--infer-date', action='store_true', help='ファイル名(okuyami_YYYYMMDD_)から日付推定')
+    parser.add_argument('--generate-empty', action='store_true', help='休刊日/掲載なしの空ポストを生成')
+    parser.add_argument('--reason', choices=['holiday', 'nodata'], default='holiday', help='空ポスト理由')
+    args = parser.parse_args()
+
+    # 日付決定ロジック
+    dt: datetime
+    if args.date:
+        try:
+            dt = datetime.strptime(args.date, '%Y-%m-%d')
+        except ValueError:
+            print('エラー: --date は YYYY-MM-DD 形式')
+            sys.exit(1)
+    elif args.infer_date and args.file:
+        import re as _re
+        m = _re.search(r'(20\d{6})', os.path.basename(args.file))
+        if m:
+            try:
+                dt = datetime.strptime(m.group(1), '%Y%m%d')
+            except ValueError:
+                dt = datetime.now()
+                print('警告: ファイル名日付解析失敗・現在日時使用')
+        else:
+            print('警告: ファイル名から日付抽出できず現在日時を使用')
+            dt = datetime.now()
     else:
-        # コマンドライン引数モード
-        args = parser.parse_args()
-        
-        uploader = GitHubPagesUploader(args.repo, args.branch)
-        success = uploader.upload_markdown_file(args.file, args.message)
-    
-    if not success:
+        dt = datetime.now()
+
+    uploader = GitHubPagesUploader(args.repo, args.branch)
+    ok = uploader.upload_markdown_file(
+        source_file=args.file,
+        commit_message=args.message,
+        dt=dt,
+        generate_empty=args.generate_empty,
+        reason=args.reason
+    )
+    if not ok:
         sys.exit(1)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

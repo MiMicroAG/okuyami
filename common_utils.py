@@ -123,11 +123,18 @@ def build_front_matter(title: str, dt: datetime | None = None, *, layout: str = 
 
 
 def get_logger(name: str = 'okuyami') -> logging.Logger:
+    """共通ロガー取得
+    環境変数 OKUYAMI_LOG_LEVEL (DEBUG/INFO/WARNING/ERROR) でログレベル変更可。
+    既にハンドラが付いている場合はそのまま再利用。
+    """
     logger = logging.getLogger(name)
     if not logger.handlers:
         handler = logging.StreamHandler()
-        fmt = logging.Formatter('[%(levelname)s] %(message)s')
+        fmt = logging.Formatter('[%(asctime)s %(levelname)s] %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
         handler.setFormatter(fmt)
         logger.addHandler(handler)
-        logger.setLevel(logging.INFO)
+        level_name = os.getenv('OKUYAMI_LOG_LEVEL', 'INFO').upper()
+        level = getattr(logging, level_name, logging.INFO)
+        logger.setLevel(level)
+        logger.propagate = False
     return logger

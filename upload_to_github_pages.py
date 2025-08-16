@@ -122,11 +122,22 @@ class GitHubPagesUploader:
             commit_message = f"お悔やみ情報を更新 ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')})"
         rel = os.path.relpath(file_path, self.repo_path)
         print("git add/commit/push 開始")
+        # git add
         if not self.run_git_command(['git', 'add', rel]):
             return False
+        # 差分有無チェック (ステージ済み比較)。差分なければコミット/プッシュをスキップ
+        try:
+            diff_check = subprocess.run(['git', 'diff', '--cached', '--quiet', '--', rel], cwd=self.repo_path)
+            if diff_check.returncode == 0:
+                print("変更なし: コミット/プッシュをスキップします")
+                return True
+        except Exception as e:
+            print(f"差分チェック失敗(継続): {e}")
+        # commit
         if not self.run_git_command(['git', 'commit', '-m', commit_message]):
-            print("コミットなし/失敗")
+            print("コミット失敗 (内容なしの可能性)")
             return False
+        # push
         if not self.run_git_command(['git', 'push', 'origin', self.branch]):
             return False
         print("GitHub Pages へプッシュ完了")

@@ -26,6 +26,21 @@ class OkuyamiParser:
         self.data = []
         self.current_region = ""
         self.current_city = ""
+        # 市町村 -> 地域グループマッピング（紙面分類）
+        self.city_region_map = {
+            # 甲 府
+            '甲府市': '甲 府',
+            # 峡北・甲斐
+            '韮崎市': '峡北・甲斐', '北杜市': '峡北・甲斐', '甲斐市': '峡北・甲斐',
+            # 峡 中
+            '南アルプス市': '峡 中', '中央市': '峡 中', '昭和町': '峡 中',
+            # 峡 南
+            '身延町': '峡 南', '南部町': '峡 南', '富士川町': '峡 南', '早川町': '峡 南',
+            # 峡 東
+            '山梨市': '峡 東', '笛吹市': '峡 東', '甲州市': '峡 東', '市川三郷町': '峡 東',
+            # 郡 内
+            '富士吉田市': '郡 内', '富士河口湖町': '郡 内', '忍野村': '郡 内', '山中湖村': '郡 内', '西桂町': '郡 内', '道志村': '郡 内', '大月市': '郡 内'
+        }
 
     def _get_site_url(self) -> str:
         """Jekyllの_config.yml から公開サイトURLを組み立てる。失敗時は既定値。
@@ -188,9 +203,17 @@ class OkuyamiParser:
                     self.current_city = self._normalize_municipality(matched)
                     person_info = self._parse_person_info(person_part)
                     if person_info:
-                        person_info['地域'] = self.current_region
+                        # 地域は市町村マップ優先
+                        _region = self.city_region_map.get(self.current_city, self.current_region)
+                        person_info['地域'] = _region
                         city_val = self.current_city if self.current_city else self.current_region
                         person_info['市町村'] = self._normalize_municipality(city_val)
+                        # 甲府住所補完
+                        if person_info['地域'] and '甲' in person_info['地域'] and '府' in person_info['地域']:
+                            if person_info.get('市町村') == '甲府市':
+                                addr = person_info.get('住所', '')
+                                if addr and not addr.startswith('甲府市'):
+                                    person_info['住所'] = '甲府市' + addr
                         self.data.append(person_info)
                     i += 1
                     continue
@@ -211,7 +234,8 @@ class OkuyamiParser:
                         self.current_city = self._normalize_municipality(city)
                         person_info = self._parse_person_info(person_part)
                         if person_info:
-                            person_info['地域'] = self.current_region
+                            _region = self.city_region_map.get(self.current_city, self.current_region)
+                            person_info['地域'] = _region
                             city_val = self.current_city if self.current_city else self.current_region
                             person_info['市町村'] = self._normalize_municipality(city_val)
                             self.data.append(person_info)
@@ -225,7 +249,9 @@ class OkuyamiParser:
             # お悔やみ情報の解析
             person_info = self._parse_person_info(line)
             if person_info:
-                person_info['地域'] = self.current_region
+                # current_city から地域再計算（なければ既存 region ）
+                _region = self.city_region_map.get(self.current_city, self.current_region)
+                person_info['地域'] = _region
                 # 市町村名は current_city 優先。無ければ地域→市町村対応マップで補完。
                 region_city_map = {
                     '甲　府': '甲府市', '甲府': '甲府市',
@@ -239,7 +265,16 @@ class OkuyamiParser:
                 # 甲府地域フォールバック: 空 or "甲府" の場合は甲府市に統一
                 if city_val_norm in ('', '甲府') and ('甲' in self.current_region and '府' in self.current_region):
                     city_val_norm = '甲府市'
+                # 地域名そのものが欠落しているケース（スクレイピング再構築による先頭空白等）
+                if not person_info['地域'] and ('甲' in self.current_region and '府' in self.current_region):
+                    person_info['地域'] = '甲 府'
                 person_info['市町村'] = city_val_norm
+                # 甲府住所補完
+                if person_info['地域'] and '甲' in person_info['地域'] and '府' in person_info['地域']:
+                    if person_info.get('市町村') == '甲府市':
+                        addr = person_info.get('住所', '')
+                        if addr and not addr.startswith('甲府市'):
+                            person_info['住所'] = '甲府市' + addr
                 self.data.append(person_info)
             
             i += 1
@@ -540,8 +575,45 @@ class OkuyamiParser:
             df['_priority'] = df.apply(get_priority, axis=1)
             df_sorted = df.sort_values(['_priority', '_original_order'])  # 優先度、元の順序でソート
             df_sorted = df_sorted.drop(columns=['_priority', '_original_order'])  # 作業用列を削除
+
+            # 住所プレフィックス補完（甲府市）
+            try:
+                if '市町村' in df_sorted.columns and '住所' in df_sorted.columns:
+                    mask_kofu_addr = (df_sorted['市町村'] == '甲府市') & df_sorted['住所'].notna() & ~df_sorted['住所'].astype(str).str.startswith('甲府市')
+                    df_sorted.loc[mask_kofu_addr, '住所'] = '甲府市' + df_sorted.loc[mask_kofu_addr, '住所'].astype(str)
+            except Exception:
+                pass
+
+            # --- 甲府地域補完後処理 ---
+            if '地域' in df_sorted.columns:
+                mask_kofu_blank = (
+                    df_sorted['地域'].fillna('') == ''
+                ) & (
+                    df_sorted['氏名'].fillna('').str.contains('')  # ダミー条件
+                )
+                if mask_kofu_blank.any():
+                    has_header = (df_sorted['地域'] == '甲 府').any()
+                    if has_header:
+                        df_sorted.loc[mask_kofu_blank, '地域'] = '甲 府'
+                        if '市町村' in df_sorted.columns:
+                            city_blank = df_sorted['市町村'].fillna('') == ''
+                            df_sorted.loc[mask_kofu_blank & city_blank, '市町村'] = '甲府市'
+                # 依然として地域/市町村が空欄の行（先頭甲府ブロック想定）を保守的に甲府で補完
+                if '市町村' in df_sorted.columns:
+                    mask_both_blank = (df_sorted['地域'].fillna('') == '') & (df_sorted['市町村'].fillna('') == '')
+                    if mask_both_blank.any():
+                        df_sorted.loc[mask_both_blank, '地域'] = '甲 府'
+                        df_sorted.loc[mask_both_blank, '市町村'] = '甲府市'
             
             # CSVファイルに保存
+            # 住所プレフィックス補完（甲府市）
+            try:
+                if '市町村' in df_sorted.columns and '住所' in df_sorted.columns:
+                    mask_kofu_addr = (df_sorted['市町村'] == '甲府市') & df_sorted['住所'].notna() & ~df_sorted['住所'].astype(str).str.startswith('甲府市')
+                    df_sorted.loc[mask_kofu_addr, '住所'] = '甲府市' + df_sorted.loc[mask_kofu_addr, '住所'].astype(str)
+            except Exception:
+                pass
+
             df_sorted.to_csv(output_path, index=False, encoding='utf-8-sig')
             print(f"CSVファイルを保存しました: {output_path}")
             
@@ -978,8 +1050,36 @@ def main():
     parser.add_argument('--auto', action='store_true', help='自動モード（最新ファイルを自動選択）')
     parser.add_argument('--file', type=str, help='入力ファイルのパス')
     parser.add_argument('--output-dir', type=str, default='./okuyami_output', help='出力ディレクトリ')
+    parser.add_argument('--from-csv', type=str, help='既存CSVからMarkdownのみ生成（解析処理をスキップ）')
     args = parser.parse_args()
     
+    # CSVからの再生成指定がある場合は解析フローをスキップ
+    if args.from_csv:
+        csv_path = args.from_csv
+        if not os.path.exists(csv_path):
+            print(f"CSVが見つかりません: {csv_path}")
+            sys.exit(1)
+        try:
+            import pandas as _pd
+            df_src = _pd.read_csv(csv_path, encoding='utf-8-sig')
+        except Exception as e:
+            print(f"CSV読込エラー: {e}")
+            sys.exit(1)
+        data = df_src.to_dict(orient='records')
+        if not data:
+            print('CSVに有効データがありません')
+            sys.exit(2)
+        base_name = os.path.splitext(os.path.basename(csv_path))[0]
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_dir = args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        parser_obj = OkuyamiParser()
+        # そのまま Markdown 保存
+        md_out = os.path.join(output_dir, f"{base_name}_mdfromcsv_{timestamp}.md")
+        parser_obj.save_to_markdown(data, md_out)
+        print(f"ENTRY_COUNT={len(data)}")
+        sys.exit(0)
+
     # 引数がない場合はインタラクティブモード
     if len(sys.argv) == 1:
         print("お悔やみ情報解析・整理スクリプト")

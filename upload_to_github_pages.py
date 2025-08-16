@@ -238,6 +238,12 @@ def main():
         dt = datetime.now()
 
     uploader = GitHubPagesUploader(args.repo, args.branch)
+    # Force UTF-8 environment to reduce mojibake risk on Windows git
+    try:
+        os.environ.setdefault('LANG', 'ja_JP.UTF-8')
+        os.environ.setdefault('LC_ALL', 'ja_JP.UTF-8')
+    except Exception:
+        pass
     ok = uploader.upload_markdown_file(
         source_file=args.file,
         commit_message=args.message,

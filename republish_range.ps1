@@ -9,9 +9,10 @@ try {
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
   # 対象リポジトリ (固定パス) に対して設定
   $repo = Resolve-Path './okuyami-info'
-  git -C $repo i18n.commitEncoding utf-8 | Out-Null
-  git -C $repo i18n.logOutputEncoding utf-8 | Out-Null
+  git -C $repo config i18n.commitEncoding utf-8 | Out-Null
+  git -C $repo config i18n.logOutputEncoding utf-8 | Out-Null
   git -C $repo config core.quotepath false | Out-Null
+  $env:LC_ALL = 'ja_JP.UTF-8'
 } catch {}
 
 # ファイル列挙 (デフォルトは 08/04 〜 08/16 新生成一式)

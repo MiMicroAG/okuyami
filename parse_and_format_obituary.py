@@ -20,12 +20,11 @@ except Exception:
 
 class OkuyamiParser:
     def __init__(self):
-        """
-        初期化
-        """
+        """初期化"""
         self.data = []
         self.current_region = ""
         self.current_city = ""
+        self.is_holiday = False  # 休刊日/掲載なし検知フラグ
         # 市町村 -> 地域グループマッピング（紙面分類）
         self.city_region_map = {
             # 甲 府
@@ -111,11 +110,27 @@ class OkuyamiParser:
         try:
             with open(filepath, 'r', encoding='utf-8') as f:
                 content = f.read()
+            # 休刊日/掲載なし検知
+            if any(k in content for k in ['休刊日', '掲載はありません', '掲載なし']):
+                self.is_holiday = True
+                # 休刊日の場合はデータ解析せず空配列で戻す
+                return []
             # --- 前処理: 1行に詰め込まれているケースに対応するため、区切り記号前に改行を挿入 ---
             # 既に改行の直後にある場合は挿入しない (先読み否定)
             import re as _re_pre
-            # Region 区切り '■'
+            # Region 区切り '■' 挿入 (ただし既存の "■ xxx ■" パターン内の終端側には挿入しない)
+            # 1) いったん地域ヘッダ候補をプレースホルダに退避
+            region_tokens = {}
+            def _region_repl(m):
+                key = f"__REGION_TOKEN_{len(region_tokens)}__"
+                region_tokens[key] = m.group(0)
+                return key
+            content = re.sub(r'■\s*[^\n■]{1,20}?\s*■', _region_repl, content)
+            # 2) 残りの単独 '■' の前に改行を追加
             content = _re_pre.sub(r'(?<!\n)■', '\n■', content)
+            # 3) プレースホルダを元に戻す
+            for k, v in region_tokens.items():
+                content = content.replace(k, v)
             # 二つ目の地域終端記号直後に人物が続くケース: "■甲府■姓名さん" → 改行
             content = _re_pre.sub(r'(■[^\n■]{0,30}?■)(?=\S)', r'\1\n', content)
             # 市町村/人物開始 '◇'
@@ -160,10 +175,20 @@ class OkuyamiParser:
                 i += 1
                 continue
             
-            # 地域セクションの検出
+            # 地域セクションの検出（改行挿入処理で『■ 甲 府 』『■』に割れてしまったケースへ対応）
             region_match = re.match(r'■\s*(.*?)\s*■', line)
+            if not region_match and line.startswith('■') and '■' not in line[1:] and not line.endswith('■'):
+                # 次行が単独 '■' の場合は結合して地域扱い
+                if i + 1 < len(lines) and lines[i+1].strip() == '■':
+                    merged = line + ' ■'
+                    region_match = re.match(r'■\s*(.*?)\s*■', merged)
+                    if region_match:
+                        # 次行スキップ用に消費
+                        i += 1
             if region_match:
                 self.current_region = region_match.group(1).strip()
+                # スペースバリエーション正規化（全角/半角混在→半角スペース1つ）
+                self.current_region = re.sub(r'\s+', ' ', self.current_region)
                 self.current_city = ""  # 地域が変わったら市町村をリセット
                 i += 1
                 continue
@@ -1046,13 +1071,14 @@ def main():
     import glob
     
     # コマンドライン引数の解析（常にパースしてデフォルト値を持たせる）
-    parser = argparse.ArgumentParser(description="お悔やみ情報CSV→Markdown生成スクリプト")
-    parser.add_argument('--csv', required=True, help='入力CSV (解析済)')
+    parser = argparse.ArgumentParser(description="お悔やみ情報 解析/整形 スクリプト (テキスト->CSV/MD 及び CSV->MD)")
+    parser.add_argument('--csv', help='入力CSV (解析済)')
+    parser.add_argument('--file', help='入力テキストファイル (okuyami_YYYYMMDD.txt)')
     parser.add_argument('--output-dir', type=str, default='./okuyami_output', help='出力ディレクトリ')
     args = parser.parse_args()
     
-    # 常にCSVからMarkdown生成
-    if args.csv:
+    # CSV -> Markdown ルート
+    if args.csv and not args.file:
         csv_path = args.csv
         if not os.path.exists(csv_path):
             print(f"CSVが見つかりません: {csv_path}")
@@ -1077,6 +1103,109 @@ def main():
         parser_obj.save_to_markdown(data, md_out)
         print(f"ENTRY_COUNT={len(data)}")
         sys.exit(0)
+
+    # テキスト -> CSV/Markdown ルート
+    if args.file and not args.csv:
+        input_file = args.file
+        if not os.path.exists(input_file):
+            print(f"入力テキストが見つかりません: {input_file}")
+            sys.exit(1)
+        parser_obj = OkuyamiParser()
+        data = parser_obj.parse_file(input_file)
+        # 日付抽出 (行に "日付: YYYY-MM-DD" がある前提)
+        post_date = None
+        try:
+            with open(input_file, 'r', encoding='utf-8') as _rf:
+                raw_txt = _rf.read()
+            import re as _re_dt
+            mdt = _re_dt.search(r'日付:\s*(20\d{2}-\d{2}-\d{2})', raw_txt)
+            if mdt:
+                from datetime import datetime as _dt
+                try:
+                    post_date = _dt.strptime(mdt.group(1), '%Y-%m-%d').strftime('%Y-%m-%d')
+                except Exception:
+                    post_date = None
+        except Exception:
+            pass
+        if not data:
+            if parser_obj.is_holiday:
+                print('休刊日/掲載なしを検知しました (空データ)。空ポストを自動生成します。')
+                # 空ポスト（GitHub Pages）を生成
+                # upload_to_github_pages.py --repo ./okuyami-info --generate-empty --reason holiday --date <date>
+                repo_path = './okuyami-info'
+                # プレースホルダー CSV/MD を出力
+                try:
+                    base_name = os.path.splitext(os.path.basename(input_file))[0]
+                    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                    output_dir = args.output_dir
+                    os.makedirs(output_dir, exist_ok=True)
+                    placeholder_csv = os.path.join(output_dir, f"{base_name}_parsed_{timestamp}_holiday.csv")
+                    placeholder_md = os.path.join(output_dir, f"{base_name}_parsed_{timestamp}_holiday.md")
+                    import pandas as _pd
+                    cols = ['地域','市町村','氏名','ふりがな','住所','死亡日','年齢','職歴・属性','喪主','関係者','通夜','告別式','会場']
+                    _pd.DataFrame(columns=cols).to_csv(placeholder_csv, index=False, encoding='utf-8-sig')
+                    # Markdown (簡易メッセージ)
+                    jp_date = ''
+                    if post_date:
+                        try:
+                            from datetime import datetime as _dt
+                            dtp = _dt.strptime(post_date, '%Y-%m-%d')
+                            jp_date = dtp.strftime('%Y年%m月%d日')
+                        except Exception:
+                            jp_date = post_date
+                    fm = build_front_matter(f'お悔やみ情報 ({jp_date} 休刊日)', datetime.now()) if jp_date else build_front_matter('お悔やみ情報 (休刊日)', datetime.now())
+                    with open(placeholder_md, 'w', encoding='utf-8') as _ph:
+                        _ph.write(fm)
+                        _ph.write(f"# お悔やみ情報 ({jp_date if jp_date else ''})\n\n> 本日は新聞休刊日のため掲載はありません。\n\n*自動生成 (placeholder)*\n")
+                    print(f"プレースホルダーCSV生成: {placeholder_csv}")
+                    print(f"プレースホルダーMD生成: {placeholder_md}")
+                except Exception as _pe:
+                    print(f"プレースホルダー生成失敗: {_pe}")
+                if post_date:
+                    from subprocess import Popen, PIPE
+                    cmd = ['python', 'upload_to_github_pages.py', '--repo', repo_path, '--generate-empty', '--reason', 'holiday', '--date', post_date]
+                    print('空ポストアップロード実行:',' '.join(cmd))
+                    try:
+                        proc = Popen(cmd, stdout=PIPE, stderr=PIPE)
+                        out_b, err_b = proc.communicate()
+                        for label, buf in (('STDOUT', out_b), ('STDERR', err_b)):
+                            if buf:
+                                try:
+                                    txt = buf.decode('utf-8')
+                                except Exception:
+                                    try:
+                                        txt = buf.decode('cp932', errors='ignore')
+                                    except Exception:
+                                        txt = ''
+                                if txt.strip():
+                                    print(f'[upload:{label}] {txt.strip()}')
+                        if proc.returncode != 0:
+                            print(f'空ポストアップロード失敗 (returncode={proc.returncode})')
+                    except Exception as e:
+                        print(f'空ポストアップロード例外: {e}')
+                else:
+                    print('日付抽出に失敗したため空ポスト自動生成をスキップしました。')
+                print('ENTRY_COUNT=0')
+                sys.exit(0)
+            print('解析結果が空です')
+            sys.exit(2)
+        base_name = os.path.splitext(os.path.basename(input_file))[0]
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_dir = args.output_dir
+        os.makedirs(output_dir, exist_ok=True)
+        csv_out = os.path.join(output_dir, f"{base_name}_parsed_{timestamp}.csv")
+        md_out = os.path.join(output_dir, f"{base_name}_parsed_{timestamp}.md")
+        parser_obj.save_to_csv(data, csv_out)
+        parser_obj.save_to_markdown(data, md_out)
+        print(f"ENTRY_COUNT={len(data)}")
+        sys.exit(0)
+
+    if args.file and args.csv:
+        print('同時指定はできません (--file か --csv のどちらか)')
+        sys.exit(1)
+
+    print('ERROR: --file (テキスト) または --csv (既存CSV) のいずれかを指定してください')
+    sys.exit(1)
 
     # (旧)テキスト解析ルートは削除
     print('ERROR: 本スクリプトはCSV指定が必要です (--csv).')

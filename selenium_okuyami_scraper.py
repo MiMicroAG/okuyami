@@ -456,6 +456,8 @@ class SeleniumOkuyamiScraper:
                 raise RuntimeError("WebDriver not initialized.")
             driver = cast(webdriver.Chrome, self.driver)
             driver.get(url)
+            # 現在処理中URLを保持（HTMLダンプ用）
+            self._current_article_url = url  # type: ignore
             time.sleep(3)
             
             # お悔やみ情報の本文部分を抽出
@@ -491,6 +493,12 @@ class SeleniumOkuyamiScraper:
                 # #p_textarea要素が存在するまで待機
                 wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "#p_textarea")))
                 textarea_element = driver.find_element(By.CSS_SELECTOR, "#p_textarea")
+                # innerHTML を取得して <br> 区切りを新しい改行復元に利用
+                inner_html = ''
+                try:
+                    inner_html = textarea_element.get_attribute('innerHTML') or ''
+                except Exception:
+                    pass
                 content = textarea_element.text
                 # --- Normalization & cleanup to mitigate console mojibake ---
                 try:
@@ -504,16 +512,81 @@ class SeleniumOkuyamiScraper:
                 except Exception:
                     pass
                 if content and content.strip():
-                    # ログ出力時の文字化け片(� や ���)を除去し統一
+                    # HTMLを raw_html/ に保存（デバッグ）
                     try:
-                        import re as _relog
-                        log_msg = "お悔やみ情報を#p_textareaから取得しました"
-                        log_msg = _relog.sub(r'�+', '�', log_msg)  # 連続した�を1つへ
-                        log_msg = log_msg.replace('�', '')  # 最終的に除去（表示簡潔化）
-                        print(log_msg)
+                        os.makedirs('raw_html', exist_ok=True)
+                        article_id = ''
+                        try:
+                            url = getattr(self, '_current_article_url', '')
+                            import re as _re_id
+                            m = _re_id.search(r'/article/\d{4}/\d{2}/\d{2}/(\d+)', url)
+                            if m:
+                                article_id = m.group(1)
+                        except Exception:
+                            pass
+                        ts = datetime.now().strftime('%Y%m%d_%H%M%S')
+                        # ページ全体HTML
+                        try:
+                            with open(f'raw_html/article_{article_id or ts}.html', 'w', encoding='utf-8') as hf:
+                                hf.write(driver.page_source)
+                        except Exception:
+                            pass
+                        # #p_textarea の innerHTML
+                        if inner_html:
+                            try:
+                                with open(f'raw_html/article_{article_id or ts}_inner.html', 'w', encoding='utf-8') as ihf:
+                                    ihf.write(inner_html)
+                            except Exception:
+                                pass
                     except Exception:
-                        print("お悔やみ情報を#p_textareaから取得しました")
-                    return self._filter_okuyami_text(content)
+                        pass
+
+                    # inner_html からレイアウト復元（<br> / 見出し / 人物単位）
+                    restored = content
+                    try:
+                        import re as _reseg
+                        raw = inner_html or content
+                        raw = _reseg.sub(r'<br\s*/?>', '\n', raw, flags=_reseg.I)
+                        raw = _reseg.sub(r'<[^>]+>', '', raw)
+                        raw = raw.replace('\u3000', ' ')
+                        # 基本区切り
+                        raw = _reseg.sub(r'(?<!\n)■', '\n■', raw)
+                        raw = _reseg.sub(r'(?<!\n)◇', '\n◇', raw)
+                        raw = _reseg.sub(r'。(?!\n)(?=[一-龥々〆〇]{1,8}[^。\n]{0,25}?さん（)', '。\n', raw)
+                        lines = [l for l in (s.rstrip() for s in raw.split('\n')) if l.strip()]
+                        # 単漢字連結
+                        out = []
+                        buf = []
+                        for ln in lines:
+                            if _reseg.fullmatch(r'[一-龥々〆〇]$', ln):
+                                buf.append(ln)
+                                continue
+                            if buf:
+                                ln = ''.join(buf) + ln
+                                buf = []
+                            out.append(ln)
+                        if buf:
+                            out.append(''.join(buf))
+                        # 地域見出し行修正: '■ 甲 府' + 余分スペース→ '■ 甲 府 ■'
+                        fixed = []
+                        i = 0
+                        while i < len(out):
+                            ln = out[i]
+                            # パターン: 行1 = '■ 甲 府' (行頭 '■' かつ後続15文字以内に2つ目の'■'が無い) かつ 次行が単独 '■'
+                            if ln.startswith('■') and '■' not in ln[1:15] and i + 1 < len(out) and out[i+1] == '■':
+                                merged = ln.rstrip() + ' ■'
+                                fixed.append(merged)
+                                i += 2
+                                continue
+                            fixed.append(ln)
+                            i += 1
+                        restored = '\n'.join(fixed)
+                    except Exception:
+                        pass
+
+                    # ログ簡潔化
+                    print("お悔やみ情報を#p_textareaから取得しました (layout restored)")
+                    return self._filter_okuyami_text(restored)
             except Exception as e:
                 print(f"#p_textarea要素の取得に失敗: {e}")
             

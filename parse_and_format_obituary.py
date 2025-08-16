@@ -1046,16 +1046,14 @@ def main():
     import glob
     
     # コマンドライン引数の解析（常にパースしてデフォルト値を持たせる）
-    parser = argparse.ArgumentParser(description="お悔やみ情報解析・整理スクリプト")
-    parser.add_argument('--auto', action='store_true', help='自動モード（最新ファイルを自動選択）')
-    parser.add_argument('--file', type=str, help='入力ファイルのパス')
+    parser = argparse.ArgumentParser(description="お悔やみ情報CSV→Markdown生成スクリプト")
+    parser.add_argument('--csv', required=True, help='入力CSV (解析済)')
     parser.add_argument('--output-dir', type=str, default='./okuyami_output', help='出力ディレクトリ')
-    parser.add_argument('--from-csv', type=str, help='既存CSVからMarkdownのみ生成（解析処理をスキップ）')
     args = parser.parse_args()
     
-    # CSVからの再生成指定がある場合は解析フローをスキップ
-    if args.from_csv:
-        csv_path = args.from_csv
+    # 常にCSVからMarkdown生成
+    if args.csv:
+        csv_path = args.csv
         if not os.path.exists(csv_path):
             print(f"CSVが見つかりません: {csv_path}")
             sys.exit(1)
@@ -1080,50 +1078,9 @@ def main():
         print(f"ENTRY_COUNT={len(data)}")
         sys.exit(0)
 
-    # 引数がない場合はインタラクティブモード
-    if len(sys.argv) == 1:
-        print("お悔やみ情報解析・整理スクリプト")
-        print("=" * 40)
-        
-        # 入力ファイルのパスを指定
-        input_file = input("入力ファイルのパスを入力してください（Enter で ./okuyami_data/okuyami_20250806.txt）: ").strip()
-        if not input_file:
-            input_file = "./okuyami_data/okuyami_20250806.txt"
-    else:
-        # コマンドライン引数モード
-        
-        if args.auto:
-            # 自動モード: 本日分があれば最優先で選択、なければ最新を選択
-            pattern = "./okuyami_data/okuyami_*.txt"
-            files = glob.glob(pattern)
-            if not files:
-                print(f"エラー: お悔やみデータファイルが見つかりません: {pattern}")
-                sys.exit(1)
-
-            # 今日の日付に一致するファイル名を優先
-            today_compact = datetime.now().strftime("%Y%m%d")
-            preferred = os.path.join("./okuyami_data", f"okuyami_{today_compact}.txt")
-            if os.path.exists(preferred):
-                input_file = preferred
-                print(f"自動モード: 本日分を優先選択 - {input_file}")
-            else:
-                # 最新のファイルを選択（ファイル名でソート）
-                input_file = max(files)
-                print(f"自動モード: 最新ファイルを選択 - {input_file}")
-        elif args.file:
-            input_file = args.file
-        else:
-            print("エラー: --auto または --file オプションを指定してください")
-            sys.exit(1)
-    
-    # ファイルの存在確認
-    if not os.path.exists(input_file):
-        print(f"ファイルが見つかりません: {input_file}")
-        sys.exit(1)
-    
-    # パーサーを作成して解析実行
-    parser_obj = OkuyamiParser()
-    data = parser_obj.parse_file(input_file)
+    # (旧)テキスト解析ルートは削除
+    print('ERROR: 本スクリプトはCSV指定が必要です (--csv).')
+    sys.exit(1)
 
     # 新聞休刊日など明示メッセージを検知（テキスト全体で判定）
     is_holiday = False

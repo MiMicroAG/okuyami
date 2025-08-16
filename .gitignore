@@ -26,8 +26,10 @@ Thumbs.db
 #############################################
 # Local configs / secrets
 #############################################
-config.ini            # 実運用設定 (除外)
-!config_sample.ini    # サンプルは残す
+# 実運用設定 (除外)
+config.ini
+# サンプルは残す
+!config_sample.ini
 .env
 .env.*
 *.secret*
@@ -38,7 +40,8 @@ config.ini            # 実運用設定 (除外)
 #############################################
 *.log
 logs/
-raw_html/             # スクレイピング元HTML（大量肥大化防止）
+# スクレイピング元HTML（大量肥大化防止）
+raw_html/
 
 #############################################
 # Generated data / outputs (再生成可能)

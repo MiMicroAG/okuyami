@@ -101,8 +101,12 @@ class OkuyamiParser:
             import re as _re_pre
             # Region 区切り '■'
             content = _re_pre.sub(r'(?<!\n)■', '\n■', content)
+            # 二つ目の地域終端記号直後に人物が続くケース: "■甲府■姓名さん" → 改行
+            content = _re_pre.sub(r'(■[^\n■]{0,30}?■)(?=\S)', r'\1\n', content)
             # 市町村/人物開始 '◇'
             content = _re_pre.sub(r'(?<!\n)◇', '\n◇', content)
+            # 句点+スペース無しで直後に新しい人物 (漢字～ さん（) が続く場合は改行
+            content = _re_pre.sub(r'。(?!\n)(?=[一-龥々〆〇][^。\n]{0,40}?さん（)', '。\n', content)
             # 連続した改行を1つに圧縮
             content = _re_pre.sub(r'\n{2,}', '\n', content)
             
@@ -148,6 +152,22 @@ class OkuyamiParser:
                 self.current_city = ""  # 地域が変わったら市町村をリセット
                 i += 1
                 continue
+            # フォールバック: 誤って "■ 甲　府　" と単独行になり次行が人物開始("■姓名さん(")の場合
+            if line.startswith('■') and 'さん（' not in line:
+                # 次行確認
+                if i + 1 < len(lines):
+                    nxt = lines[i+1].lstrip()
+                    if nxt.startswith('■') and 'さん（' in nxt:
+                        # 現行行を地域名、次行の先頭 '■' は人物行から除去
+                        tmp_region = line.lstrip('■').strip()
+                        tmp_region = re.sub(r'\s+', ' ', tmp_region)
+                        if tmp_region:
+                            self.current_region = tmp_region
+                            self.current_city = ""
+                        # 次行側の先頭 '■' を除去
+                        lines[i+1] = re.sub(r'^\s*■', '', lines[i+1])
+                        i += 1
+                        continue
             
             # 市町村セクションの検出
             if line.startswith('◇'):
@@ -206,9 +226,20 @@ class OkuyamiParser:
             person_info = self._parse_person_info(line)
             if person_info:
                 person_info['地域'] = self.current_region
-                # 市町村名は正規化して格納（市町村が未設定なら地域名を正規化して採用）
-                city_val = self.current_city if self.current_city else self.current_region
-                person_info['市町村'] = self._normalize_municipality(city_val)
+                # 市町村名は current_city 優先。無ければ地域→市町村対応マップで補完。
+                region_city_map = {
+                    '甲　府': '甲府市', '甲府': '甲府市',
+                    '峡北・甲斐': '', '峡　北': '', '峡　中': '', '峡　南': '', '峡　東': '', '郡　内': ''
+                }
+                if self.current_city:
+                    city_val = self.current_city
+                else:
+                    city_val = region_city_map.get(self.current_region, self.current_region)
+                city_val_norm = self._normalize_municipality(city_val)
+                # 甲府地域フォールバック: 空 or "甲府" の場合は甲府市に統一
+                if city_val_norm in ('', '甲府') and ('甲' in self.current_region and '府' in self.current_region):
+                    city_val_norm = '甲府市'
+                person_info['市町村'] = city_val_norm
                 self.data.append(person_info)
             
             i += 1

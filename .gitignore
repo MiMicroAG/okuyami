@@ -1,25 +1,72 @@
-# Byte-compiled / optimized / DLL files
+#############################################
+# Python build artifacts
+#############################################
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyo
+*.pyd
+*.so
 
-# Virtual env
+#############################################
+# Virtual environments
+#############################################
 .venv/
 venv/
+env/
 
-# OS/editor
+#############################################
+# OS / Editor / IDE
+#############################################
 .DS_Store
 Thumbs.db
 .vscode/
+.idea/
 
+#############################################
 # Local configs / secrets
-config.ini
+#############################################
+config.ini            # 実運用設定 (除外)
+!config_sample.ini    # サンプルは残す
 .env
-*.log
+.env.*
+*.secret*
+*token*
 
-# Generated data/outputs
+#############################################
+# Logs / Debug artifacts
+#############################################
+*.log
+logs/
+raw_html/             # スクレイピング元HTML（大量肥大化防止）
+
+#############################################
+# Generated data / outputs (再生成可能)
+#############################################
 okuyami_output/
 okuyami_data/
 
+#############################################
+# Selenium / Drivers (配置した場合)
+#############################################
+chromedriver*
+msedgedriver*
+geckodriver*
+
+#############################################
+# Test / Coverage
+#############################################
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+#############################################
+# PowerShell history / misc
+#############################################
+*.pshistory
+
+#############################################
 # Nested GitHub Pages repo (managed separately)
+#############################################
 okuyami-info/

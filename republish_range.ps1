@@ -7,9 +7,11 @@ try {
   chcp 65001 > $null
   $env:LANG = 'ja_JP.UTF-8'
   [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new()
-  git config i18n.commitEncoding utf-8 | Out-Null
-  git config i18n.logOutputEncoding utf-8 | Out-Null
-  git config core.quotepath false | Out-Null
+  # 対象リポジトリ (固定パス) に対して設定
+  $repo = Resolve-Path './okuyami-info'
+  git -C $repo i18n.commitEncoding utf-8 | Out-Null
+  git -C $repo i18n.logOutputEncoding utf-8 | Out-Null
+  git -C $repo config core.quotepath false | Out-Null
 } catch {}
 
 # ファイル列挙 (デフォルトは 08/04 〜 08/16 新生成一式)

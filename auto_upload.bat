@@ -71,9 +71,21 @@ echo WARN: scrape failed rc=%SCRAPE_RC% but using existing %TODAY_FILE%
 echo DONE scrape rc=%SCRAPE_RC%
 echo.
 
-REM ---- STEP 2 PARSE (deprecated direct parse; expect external CSV already produced) ----
-echo [2] PARSE (skipped: CSV生成は別プロセスで実施)
-if not exist "%TODAY_FILE%" echo WARN: %TODAY_FILE% が存在しないため後続CSV生成不可
+REM ---- STEP 2 PARSE: run parser to produce CSV/MD from today's text ----
+echo [2] PARSE
+if not exist "%TODAY_FILE%" (
+	echo WARN: %TODAY_FILE% が存在しないため後続CSV生成不可
+	set PARSE_RC=1
+) else (
+	echo Running parser for %TODAY_FILE% ...
+	python parse_and_format_obituary.py --file "%TODAY_FILE%" --output-dir "%~dp0okuyami_output" >"%PARSE_LOG%" 2>&1
+	set PARSE_RC=%ERRORLEVEL%
+	type "%PARSE_LOG%"
+	rem --- extract ENTRY_COUNT=value from parse log if present ---
+	for /f "usebackq tokens=2 delims==" %%E in (`findstr "ENTRY_COUNT=" "%PARSE_LOG%" 2^>nul`) do set ENTRY_COUNT=%%E
+)
+if not "%PARSE_RC%"=="0" goto FAIL_PARSE
+echo DONE parse rc=%PARSE_RC%
 echo.
 
 REM ---- STEP 3 UPLOAD ----

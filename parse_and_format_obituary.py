@@ -11,6 +11,7 @@ import os
 from datetime import datetime
 import pandas as pd
 from common_utils import compute_priority, detect_holiday, get_jp_date, build_front_matter
+from urllib.parse import quote_plus
 import configparser
 from typing import Optional
 try:
@@ -40,6 +41,26 @@ class OkuyamiParser:
             # 郡 内
             '富士吉田市': '郡 内', '富士河口湖町': '郡 内', '忍野村': '郡 内', '山中湖村': '郡 内', '西桂町': '郡 内', '道志村': '郡 内', '大月市': '郡 内'
         }
+
+    # --- Normalization helpers ---
+    def _normalize_whitespace(self, s: str) -> str:
+        if not s:
+            return s
+        s = s.replace('\r', ' ').replace('\n', ' ').replace('\u3000', ' ')
+        s = re.sub(r'\s+', ' ', s).strip()
+        return s
+
+    def _fw_alnum_to_hw(self, s: str) -> str:
+        if not s:
+            return s
+        tbl = {}
+        for code in range(ord('０'), ord('９') + 1):
+            tbl[code] = code - 0xFEE0
+        for code in range(ord('Ａ'), ord('Ｚ') + 1):
+            tbl[code] = code - 0xFEE0
+        for code in range(ord('ａ'), ord('ｚ') + 1):
+            tbl[code] = code - 0xFEE0
+        return s.translate(tbl)
 
     def _get_site_url(self) -> str:
         """Jekyllの_config.yml から公開サイトURLを組み立てる。失敗時は既定値。
@@ -305,85 +326,60 @@ class OkuyamiParser:
             i += 1
     
     def _parse_person_info(self, line):
-        """
-        個人のお悔やみ情報を解析
-        
-        Args:
-            line (str): お悔やみ情報の行
-            
-        Returns:
-            dict: 解析された個人情報
-        """
-        # 特殊文字（☆記号など）を除去
-        cleaned_line = re.sub(r'☆（.*?）', '', line)
-        
-        # 基本パターン: 氏名（ふりがな）[職歴情報。]住所。死亡日。年齢。その他の情報
-        # 職歴情報がある場合とない場合の両方に対応
-        
-        # まず氏名とふりがなを抽出
-        name_pattern = r'(.+?)さん（(.+?)）\s*(.+)'
-        name_match = re.match(name_pattern, cleaned_line)
-        
-        if not name_match:
+        """1行（人物情報）を解析し dict を返す。失敗時 None。"""
+        if not line or 'さん（' not in line:
             return None
-            
-        name = name_match.group(1).strip()
-        furigana = name_match.group(2).strip()
-        remaining_text = name_match.group(3).strip()
-        
-        # 残りのテキストを「。」で分割
-        parts = remaining_text.split('。')
-        if len(parts) < 4:  # 最低でも住所、死亡日、年齢、その他情報が必要
+        cleaned = re.sub(r'☆（.*?）', '', line)
+        m = re.match(r'(.+?)さん（(.+?)）\s*(.+)', cleaned)
+        if not m:
             return None
-        
-        # 年齢パターンを探して位置を特定
-        age_pattern = r'(\d+)歳'
-        age_index = -1
+        name = m.group(1).strip()
+        furigana = m.group(2).strip()
+        rest = m.group(3).strip()
+
+        parts = rest.split('。')
+        if len(parts) < 4:
+            return None
+        age_idx = -1
         age = 0
-        
         for i, part in enumerate(parts):
-            age_match = re.search(age_pattern, part)
-            if age_match:
-                age = int(age_match.group(1))
-                age_index = i
+            ma = re.search(r'(\d+)歳', part)
+            if ma:
+                age = int(ma.group(1))
+                age_idx = i
                 break
-        
-        if age_index == -1:
+        if age_idx == -1:
             return None
-            
-        # 年齢の位置に基づいて他の要素を決定
-        if age_index >= 3:
-            # 職歴情報がある場合: [職歴情報, 住所, 死亡日, 年齢部分, ...]
-            occupation_raw = parts[0].strip() if age_index > 2 else ""
-            address = parts[age_index - 2].strip()
-            death_date = parts[age_index - 1].strip()
+        if age_idx >= 3:
+            occupation_raw = parts[0].strip() if age_idx > 2 else ''
+            address = parts[age_idx - 2].strip()
+            death_date = parts[age_idx - 1].strip()
         else:
-            # 職歴情報がない場合: [住所, 死亡日, 年齢部分, ...]
-            occupation_raw = ""
+            occupation_raw = ''
             address = parts[0].strip()
             death_date = parts[1].strip()
-        
-        # 年齢以降のテキストを結合
-        other_info = '。'.join(parts[age_index + 1:])
-        
-        # 職歴・属性はキーワードで判定せず、該当パートをそのまま採用（喪主関連語が混入している場合のみ除外）
-        final_occupation = ""
-        if occupation_raw and not any(keyword in occupation_raw for keyword in ['喪主', '長男', '長女', '次男', '次女', '夫', '妻', '父', '母']):
+
+        other_info = '。'.join(parts[age_idx + 1:])
+        final_occupation = ''
+        if occupation_raw and not any(k in occupation_raw for k in ['喪主', '長男', '長女', '次男', '次女', '夫', '妻', '父', '母']):
             final_occupation = occupation_raw.strip()
 
-        # 喪主情報を先に抽出
-        chief_mourner = self._extract_chief_mourner(other_info)
-        
-        # 追加抽出は行わない（決め打ちせず、元テキスト優先）。
-        
-        # 通夜・告別式情報を抽出
-        wake_info = self._extract_wake_info(other_info)
-        funeral_info = self._extract_funeral_info(other_info)
-        venue = self._extract_venue(other_info)
-        
-        # 関係者情報を抽出
-        relatives = self._extract_relatives(other_info)
-        
+        # Normalize other_info whitespace early
+        other_info_norm = self._normalize_whitespace(other_info)
+        # Extract mourner from normalized text
+        chief_mourner = self._extract_chief_mourner(other_info_norm)
+        # Relatives exclude mourner sentence
+        relatives = self._extract_relatives(other_info_norm)
+        # Wake / funeral / venue from normalized text
+        wake_info = self._extract_wake_info(other_info_norm)
+        funeral_info = self._extract_funeral_info(other_info_norm)
+        venue = self._extract_venue(other_info_norm)
+
+        # Field normalizations
+        chief_mourner = self._fw_alnum_to_hw(self._normalize_whitespace(chief_mourner))
+        relatives = self._fw_alnum_to_hw(self._normalize_whitespace(relatives))
+        final_occupation = self._fw_alnum_to_hw(final_occupation)
+
         return {
             '氏名': name,
             'ふりがな': furigana,
@@ -476,91 +472,62 @@ class OkuyamiParser:
         return ""
     
     def _extract_relatives(self, text):
+        """関係者情報をシンプル抽出（喪主節は除外）。
+        『さん』『氏』を含み、通夜/告別式/会場 ではない断片を元順序で採用。
+        喪主は別カラムで管理するため『喪主は...。』節を除去してから分割。
+        CSV上は全件を『、』連結。表示側で改行 (<br>)。
         """
-        関係者情報を抽出（喪主情報は除外）。
-        キーワードで決め打ちせず、原文の文節をそのまま採用。
-        具体的には、
-        - 喪主節を除いた残りを「、」「。」で区切り、
-        - 「さん」または「氏」を含む文節を、そのまま収集する。
-        """
-        relatives: list[str] = []
-        seen_keys: set[str] = set()
-
-        # 喪主情報を除外
-        text_without_mourner = re.sub(r'喪主は[^。]*?(?:さん|氏)', '', text)
-
-        def _canon(s: str) -> str:
-            # 全角スペース除去 + すべての空白除去 + 読点の正規化 + 末尾の「さん/氏」を除去
-            t = s.replace('\u3000', ' ')
-            t = re.sub(r'\s+', '', t)
-            t = t.replace('，', '、')
-            t = re.sub(r'(さん|氏)$', '', t)
-            return t
-
-        # 区切って「さん/氏」を含む文節をそのまま採用
-        segments = re.split(r'[、。]+', text_without_mourner)
-        for seg in segments:
-            s = seg.strip()
-            if not s:
+        # 喪主文を特別処理し、喪主本人も関係者リストに含める
+        mourner_sentence_match = re.search(r'喪主は[^。]*?(?:。|$)', text)
+        mourner_entry = ''
+        remainder_after_mourner = ''
+        base_text = text
+        if mourner_sentence_match:
+            sentence = mourner_sentence_match.group(0)
+            # 喪主本人 (最初の ～さん) 抽出
+            m_first = re.search(r'喪主は([^、。]*?さん)', sentence)
+            if m_first:
+                mourner_entry = m_first.group(1).strip()
+            # 喪主本人部分を削除した残り (追加親族)
+            remainder_after_mourner = re.sub(r'^喪主は[^、。]*?さん', '', sentence)
+            base_text = text.replace(sentence, '')  # 元テキストから喪主文全体除去
+        # 連結（喪主本人 + 喪主文残り + 残り本文）
+        combined_segments = []
+        if mourner_entry:
+            combined_segments.append(mourner_entry)
+        if remainder_after_mourner:
+            combined_segments.append(remainder_after_mourner)
+        if base_text:
+            combined_segments.append(base_text)
+        combined = '。'.join([c for c in combined_segments if c])
+        parts = re.split(r'[、。]+', combined)
+        picked: list[str] = []
+        seen = set()
+        for part in parts:
+            seg = part.strip()
+            if not seg:
                 continue
-            # 「通夜」「告別式」「会場」などは除外（関係者ではない）
-            if any(h in s for h in ['通夜', '告別式', '会場']):
+            if any(key in seg for key in ['通夜', '告別式', '会場']):
                 continue
-            if ('さん' in s) or ('氏' in s):
-                key = _canon(s)
-                if key and key not in seen_keys:
-                    relatives.append(s)
-                    seen_keys.add(key)
-
-        return '、'.join(relatives) if relatives else ""
+            if ('さん' in seg) or ('氏' in seg):
+                norm_key = re.sub(r'(さん|氏)$', '', seg)
+                if norm_key not in seen:
+                    picked.append(seg)
+                    seen.add(norm_key)
+        return '、'.join(picked) if picked else ''
     
     def _extract_chief_mourner(self, text):
+        """喪主欄シンプル抽出（原文保持重視）。
+        形式: 『喪主はxxxさん。』の xxxさん 部分をそのまま返す。
+        『喪主は』以降最初の句点までに『さん』が無い場合は40文字以内の断片を返す。
         """
-        喪主情報を抽出
-        """
-        # より詳細なパターンマッチング
-        mourner_patterns = [
-            # 「喪主は長男で○○勤務△△さん」のパターン
-            r'喪主は(.+?)で(.+?)勤務(.+?)さん',
-            # 「喪主は長男で○○△△さん」のパターン  
-            r'喪主は(.+?)で(.+?)(.+?)さん',
-            # 「喪主は○○勤務△△さん」のパターン
-            r'喪主は(.+?)勤務(.+?)さん',
-            # 「喪主は△△さん」のパターン
-            r'喪主は(.+?)さん'
-        ]
-        
-        for pattern in mourner_patterns:
-            match = re.search(pattern, text)
-            if match:
-                groups = match.groups()
-                if len(groups) == 3:
-                    # 関係性、職場、名前の場合
-                    relation = groups[0].strip()
-                    workplace = groups[1].strip()
-                    name = groups[2].strip()
-                    return f"{relation} {name}（{workplace}勤務）"
-                elif len(groups) == 2:
-                    # 2つの情報がある場合
-                    if '勤務' in pattern:
-                        # 職場と名前
-                        workplace = groups[0].strip()
-                        name = groups[1].strip()
-                        return f"{name}（{workplace}勤務）"
-                    else:
-                        # 関係性と職場+名前、または関係性と名前
-                        relation = groups[0].strip()
-                        workplace_name = groups[1].strip()
-                        # 職場名が含まれているかチェック
-                        if any(keyword in workplace_name for keyword in ['勤務', '会社', '銀行', '病院', '役所', '建設']):
-                            return f"{relation} {workplace_name}"
-                        else:
-                            return f"{relation} {workplace_name}"
-                else:
-                    # 名前のみ
-                    return groups[0].strip()
-        
-        return ""
+        m = re.search(r'喪主は([^。\n]*?さん)(?:。|$)', text)
+        if m:
+            return m.group(1).strip()
+        m2 = re.search(r'喪主は([^\n]{1,40})', text)
+        if m2:
+            return m2.group(1).strip()
+        return ''
     
     def save_to_csv(self, data, output_path):
         """
@@ -957,6 +924,11 @@ class OkuyamiParser:
         # データ行
         f.write('<tbody>\n')
         for _, row in df.iterrows():
+            # 関係者セルのみ赤字にする判断は後で行う（ここでは行の基本スタイルのみ）
+            try:
+                rel_check = row['関係者'] if ('関係者' in row and pd.notna(row['関係者'])) else ''
+            except Exception:
+                rel_check = ''
             f.write('<tr style="border-bottom: 1px solid #eee;">\n')
             # 氏名（太字・改行禁止）
             name = row['氏名'] if pd.notna(row['氏名']) else ''
@@ -984,26 +956,34 @@ class OkuyamiParser:
             # 簡略表示（モバイル最適化のため）
             if len(merged_addr) > 15:
                 merged_addr = merged_addr[:15] + '...'
-            f.write(f'<td style="padding: 8px; border: 1px solid #ddd; font-size: 12px;">{merged_addr}</td>\n')
+            # Google Maps へリンク
+            addr_display = merged_addr
+            addr_html = addr_display
+            try:
+                if addr_display and addr_display != '':
+                    q = quote_plus(addr_display)
+                    map_url = f'https://www.google.com/maps/search/?api=1&query={q}'
+                    addr_html = f'<a href="{map_url}" target="_blank" rel="noopener">{addr_display}</a>'
+            except Exception:
+                addr_html = addr_display
+            f.write(f'<td style="padding: 8px; border: 1px solid #ddd; font-size: 12px;">{addr_html}</td>\n')
             
-            # 関係者（省略せず全件。一人1行表示）
+            # 関係者（CSV値を元に、読点/カンマで改行表示）
             relatives = row['関係者'] if ('関係者' in row and pd.notna(row['関係者'])) else ''
-            rel_html = ''
-            if isinstance(relatives, str) and relatives:
-                # 全角読点「、」またはカンマで分割し、1人1行に（重複排除）
-                sep_normalized = relatives.replace('，', '、')
-                raw_parts = [p.strip() for p in sep_normalized.split('、') if p.strip()]
-                seen_keys = set()
-                uniq_parts = []
-                for p in raw_parts:
-                    key = re.sub(r'\s+', '', p.replace('\u3000', ' '))
-                    key = key.replace('，', '、')
-                    key = re.sub(r'(さん|氏)$', '', key)
-                    if key and key not in seen_keys:
-                        uniq_parts.append(p)
-                        seen_keys.add(key)
-                rel_html = '<br>'.join(uniq_parts) if uniq_parts else relatives
-            f.write(f'<td style="padding: 8px; border: 1px solid #ddd; font-size: 12px; line-height: 1.3; white-space: normal;">{rel_html}</td>\n')
+            raw_rel = relatives if isinstance(relatives, str) else ''
+            if raw_rel:
+                # 全角/半角カンマ正規化し分割
+                tmp = raw_rel.replace('，', '、')
+                parts = [p.strip() for p in tmp.split('、') if p.strip()]
+                rel_html = '<br>'.join(parts) if parts else raw_rel
+            else:
+                rel_html = ''
+            # NEC を含む場合はこのセルのみ赤字のインラインスタイルを付与
+            cell_style = 'padding: 8px; border: 1px solid #ddd; font-size: 12px; line-height: 1.3; white-space: normal;'
+            # 日本語文字と連続する場合もあるため単純包含チェックに変更
+            if isinstance(rel_check, str) and re.search(r'NEC', str(rel_check), flags=re.IGNORECASE):
+                cell_style = 'color: red; ' + cell_style
+            f.write(f'<td style="{cell_style}">{rel_html}</td>\n')
             f.write('</tr>\n')
         
         f.write('</tbody>\n</table>\n</div>\n\n')

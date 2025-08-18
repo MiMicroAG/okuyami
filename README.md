@@ -1,86 +1,134 @@
 # お悔やみ情報パイプライン (okuyami)
 
-このリポジトリは山梨日日新聞のお悔やみ情報を自動で取得・解析・整形し、GitHub Pages に公開するためのツール群を収めています。
+山梨日日新聞のお悔やみ情報を毎日自動取得し、解析・整形してGitHub Pagesに公開するためのパイプラインです。以下のステップを実行します。
 
-主なスクリプト
+1. **取得 (Scrape)**: Webサイトからお悔やみ情報をSeleniumでスクレイピング
+2. **解析 (Parse)**: テキストをCSV/Markdownに構造化
+3. **公開 (Publish)**: MarkdownをJekyll形式に変換しGitHub Pagesへコミット＆プッシュ
+4. **通知 (Notify)**: LINE/Discordへ処理結果を通知（オプション）
 
-- `selenium_okuyami_scraper.py` — Web から生テキストを取得して `okuyami_data/okuyami_YYYYMMDD.txt` に保存します（ログインが必要なページに対応）。
-- `parse_and_format_obituary.py` — 生テキストまたは既存 CSV を解析して CSV / Markdown（GitHub Pages 用）を生成します。休刊日はプレースホルダを出力します。
-- `upload_to_github_pages.py` — 生成した Markdown を Jekyll 形式に変換して GitHub Pages リポジトリへ add/commit/push します。
-- `send_line_stats.py` — 集計結果を LINE (Messaging API) へ通知します（オプション）。
-- `auto_upload.bat` / PowerShell スクリプト — 全工程（取得→解析→アップロード）をまとめて実行します。
+---
 
-フォルダ構成（抜粋）
+## 目次
+
+- [主な機能](#主な機能)
+- [フォルダ構成](#フォルダ構成)
+- [セットアップ](#セットアップ)
+- [利用方法](#利用方法)
+  - [1. 取得 (Scrape)](#1-取得-scrape)
+  - [2. 解析 (Parse)](#2-解析-parse)
+  - [3. 公開 (Publish)](#3-公開-publish)
+  - [4. 通知 (Notify)](#4-通知-notify)
+- [設定ファイル](#設定ファイル)
+- [運用上のポイント](#運用上のポイント)
+- [トラブルシューティング](#トラブルシューティング)
+- [ライセンス](#ライセンス)
+
+---
+
+## 主な機能
+
+- **スクレイピング**: Seleniumを利用しログイン後に最新お悔やみ情報をテキスト保存
+- **テキスト正規化**: 改行／空白統一、全角英数字→半角変換
+- **データ解析**: `喪主`の個別抽出、`関係者`の改行整形を含むCSV・Markdown出力
+- **CSV拡張**: `喪主`カラムを追加
+- **Markdown表示強化**: 関係者フィールドは読点・カンマで分割し改行表示、特定キーワード（例: `NEC`）は赤字強調
+- **住所リンク**: Google Maps検索へのリンクを住所セルに追加
+- **休刊日検知**: 休刊日・掲載なしを検知しプレースホルダ出力
+- **差分コミット**: 変更差分がなければGitHub Pagesへのコミットをスキップ
+- **通知**: LINE/Discord通知機能（Messaging API/Webhook）
+
+## フォルダ構成
 
 ```
-okuyami/
-├── okuyami_data/      # スクレイピングで保存した生テキスト
-├── okuyami_output/    # 解析結果（CSV / Markdown）
-├── _posts/             # (GitHub Pages リポジトリに同期される投稿)
+okuyami/                    # ルートディレクトリ
+├── okuyami_data/           # スクレイピング結果 (テキスト)
+├── okuyami_output/         # 解析結果 (CSV, Markdown)
+├── _posts/                  # GitHub Pages 投稿先 (サブモジュール等)
 ├── selenium_okuyami_scraper.py
 ├── parse_and_format_obituary.py
 ├── upload_to_github_pages.py
-└── GitHub_Pages_Upload_README.md  # アップロード詳細
+├── send_line_stats.py
+└── auto_upload.bat          # PowerShellバッチ（全工程まとめて実行）
 ```
 
-クイックスタート
+## セットアップ
 
-1. 設定
-   - `config_sample.ini` を参照して `config.ini` を作成／編集してください。
-   - （Windows）PowerShell の文字コードを UTF-8 に設定するとコミットメッセージの文字化けを防げます（例: `chcp 65001`）。
+1. リポジトリをクローンし移動
+   ```powershell
+   git clone https://github.com/MiMicroAG/okuyami.git
+   cd okuyami
+   ```
+2. Python環境構築 (3.8+推奨)
+   ```powershell
+   python -m venv env
+   .\env\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+3. `config_sample.ini` をコピーし `config.ini` を編集
+   - `[selenium]`: URL, ログイン情報, headless設定
+   - `[github]`: GitHub Pagesリポジトリパス
+   - `[line]`, `[discord]`: 通知用APIキー/Webhook URL
 
-2. 取得（スクレイピング）
+## 利用方法
 
+### 1. 取得 (Scrape)
 ```powershell
 python selenium_okuyami_scraper.py --auto
-# or
-python selenium_okuyami_scraper.py --date 2025-08-06
-```
-
-3. 解析（テキスト→CSV/MD）
-
+``` 
+または任意日付:
 ```powershell
-python parse_and_format_obituary.py --file okuyami_data/okuyami_20250806.txt --output-dir ./okuyami_output
-# CSVからMarkdown生成
-python parse_and_format_obituary.py --csv ./okuyami_output/okuyami_20250806_parsed_...csv --output-dir ./okuyami_output
+python selenium_okuyami_scraper.py --date YYYY-MM-DD
 ```
 
-4. アップロード（GitHub Pages）
+### 2. 解析 (Parse)
+テキストからCSV/Markdownを生成:
+```powershell
+python parse_and_format_obituary.py --file .\okuyami_data\okuyami_YYYYMMDD.txt --output-dir .\okuyami_output
+```
+既存CSVのみMarkdown再生成:
+```powershell
+python parse_and_format_obituary.py --csv .\okuyami_output\*.csv --output-dir .\okuyami_output
+```
 
+### 3. 公開 (Publish)
 ```powershell
 python upload_to_github_pages.py --repo "C:\path\to\okuyami-info"
 ```
 
-休刊日の扱い
+### 4. 通知 (Notify)
+LINE通知:
+```powershell
+python send_line_stats.py
+```
+Discord通知はコード内`common_utils.send_discord_alert()`を呼び出し
 
-- `parse_and_format_obituary.py` は本文に `休刊日` や `掲載はありません` を検出すると、空のプレースホルダ CSV/MD (`*_holiday.csv` / `*_holiday.md`) を出力します。
-- さらにオプションで空ポストを GitHub Pages に自動生成できます（`upload_to_github_pages.py --generate-empty` を使用）。
+一括実行 (Scrape→Parse→Publish→Notify):
+```powershell
+.\auto_upload.bat
+```
 
-通知（運用）
+## 設定ファイル
 
-- LINE 通知: `send_line_stats.py` を利用、設定は `config.ini` または環境変数で行います。
-- Discord 通知: `common_utils.send_discord_alert()` を呼べるようにしてあります。環境変数 `DISCORD_WEBHOOK_URL` または `config.ini` の `[discord] webhook_url` で設定してください。
+- `config_sample.ini` を参照して `config.ini` に必要情報を設定
+- Windows PowerShellで実行する前に `chcp 65001` でUTF-8モード設定を推奨
 
-運用のヒント
+## 運用上のポイント
 
-- コミットの重複を避けるため、`upload_to_github_pages.py` は差分が無ければコミットをスキップする仕組みを持っています。
-- PowerShell を使う場合、先頭で UTF-8 と LANG を設定することで git の文字化けを防げます。
+- **差分コミット**: 変更がない場合はGitHub Pagesへのcommit/pushをスキップ
+- **ENTRY_COUNT**: バッチ実行ログに処理件数を表示
+- **重複ポリシー**: `喪主`と`関係者`の重複ルールは`parse_and_format_obituary.py`で設定可能
 
-トラブルシューティング（簡易）
+## トラブルシューティング
 
-- CSV 読込エラー: 文字コードを `utf-8-sig` で再読込してください。
-- Git 認証エラー: SSH または Personal Access Token が正しく設定されているか確認してください。
-- スクレイピング失敗: `--no-headless` でブラウザ表示モードにして、セレクタやログイン処理を目視デバッグしてください。
+- **スクレイピング失敗**: `--no-headless`でブラウザ表示デバッグ
+- **CSV読み込みエラー**: `utf-8-sig`エンコーディングで再読込
+- **Git認証エラー**: SSHキー/PATの設定を確認
+- **通知エラー**: `config.ini`または環境変数のURL/トークンをチェック
 
-関連ドキュメント
+## ライセンス
 
-- `GitHub_Pages_Upload_README.md` — GitHub Pages 側の設定とアップロード手順の詳細。Jekyll 設定例を含みます。
-- `yamanashi_obituaries_selenium.md` または `山梨日日新聞お悔やみ情報取得スクリプト（Selenium版）.md` — 取得・運用ドキュメント（詳しいクイックスタートとトラブルシュート）。
+MIT License
 
-コミットと共有
-
-- 変更をリモートへ反映するには `git push origin main` を実行してください。
-
-フィードバック／追加要望
-
-- README に載せる重要な注意点や運用手順があれば指示ください。通知テスト（Discord/LINE）の手順を追記することもできます。
+---
+*Generated by analysis of project scripts.*

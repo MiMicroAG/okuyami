@@ -1,8 +1,8 @@
 # サイト設定
 title: "お悔やみ情報"
 description: "山梨日日新聞のお悔やみ情報を自動収集・整理したサイトです"
-url: "https://your-username.github.io"
-baseurl: "/your-repository-name"
+url: "https://MiMicroAG.github.io"
+baseurl: "/okuyami-info"
 
 # 著者情報
 author:
